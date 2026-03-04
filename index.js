@@ -8,196 +8,171 @@ const TELEGRAM_TOKEN  = process.env.TELEGRAM_TOKEN;
 const ANTHROPIC_KEY   = process.env.ANTHROPIC_KEY;
 const TELEGRAM_API    = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
-// In-memory task store (persists while server runs)
 let tasks = [];
 let taskIdCounter = 1;
-
-// Conversation history per chat
 const histories = {};
 
-// ── Telegram helpers ──────────────────────────────────────────
-async function sendMessage(chatId, text, parseMode = "Markdown") {
+async function sendMessage(chatId, text) {
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
     chat_id: chatId,
     text,
-    parse_mode: parseMode,
+    parse_mode: "Markdown",
   }).catch(e => console.error("Send error:", e.response?.data));
 }
 
-// ── Task tools ────────────────────────────────────────────────
 const TOOLS = [
   {
     name: "get_tasks",
-    description: "Obtiene todas las tareas del to-do list. Úsala para listar, consultar o buscar tareas.",
+    description: "Obtiene todas las tareas del to-do list.",
     input_schema: {
       type: "object",
       properties: {
-        filtro: {
-          type: "string",
-          description: "Opcional: filtrar por estado (Pendiente, En progreso, Listo) o urgencia (Alta, Media, Baja)"
-        }
+        filtro: { type: "string", description: "Filtrar por estado o urgencia (opcional)" }
       }
     }
   },
   {
     name: "create_task",
-    description: "Crea una nueva tarea en el to-do list.",
+    description: "Crea una nueva tarea. Llama esta función UNA VEZ POR CADA tarea a crear.",
     input_schema: {
       type: "object",
       properties: {
-        nombre:   { type: "string",  description: "Nombre o descripción de la tarea" },
-        estado:   { type: "string",  description: "Pendiente | En progreso | Listo", enum: ["Pendiente","En progreso","Listo"] },
-        urgencia: { type: "string",  description: "Alta | Media | Baja",             enum: ["Alta","Media","Baja"] },
-        fecha:    { type: "string",  description: "Fecha límite en formato YYYY-MM-DD (opcional)" },
-        monto:    { type: "number",  description: "Monto total (opcional)" },
-        cuotas:   { type: "integer", description: "Número de cuotas (opcional, default 1)" }
+        nombre:   { type: "string" },
+        estado:   { type: "string", enum: ["Pendiente","En progreso","Listo"] },
+        urgencia: { type: "string", enum: ["Alta","Media","Baja"] },
+        fecha:    { type: "string" },
+        monto:    { type: "number" },
+        cuotas:   { type: "integer" }
       },
       required: ["nombre"]
     }
   },
   {
     name: "update_task",
-    description: "Actualiza una tarea existente. Úsala para cambiar estado, urgencia, nombre, etc.",
+    description: "Actualiza campos de una tarea existente.",
     input_schema: {
       type: "object",
       properties: {
-        id:       { type: "integer", description: "ID de la tarea a actualizar" },
+        id:       { type: "integer" },
         nombre:   { type: "string" },
         estado:   { type: "string", enum: ["Pendiente","En progreso","Listo"] },
         urgencia: { type: "string", enum: ["Alta","Media","Baja"] },
         fecha:    { type: "string" },
-        monto:    { type: "number" },
+        monto:    { type: "number" }
       },
       required: ["id"]
     }
   },
   {
     name: "delete_task",
-    description: "Elimina una tarea por su ID.",
+    description: "Elimina una tarea por ID.",
     input_schema: {
       type: "object",
-      properties: {
-        id: { type: "integer", description: "ID de la tarea a eliminar" }
-      },
+      properties: { id: { type: "integer" } },
       required: ["id"]
     }
   },
   {
     name: "mark_cuota_pagada",
-    description: "Marca una o todas las cuotas de una tarea como pagadas o no pagadas.",
+    description: "Marca cuotas de una tarea como pagadas.",
     input_schema: {
       type: "object",
       properties: {
-        id:           { type: "integer", description: "ID de la tarea" },
-        cuota_numero: { type: "integer", description: "Número de cuota (1, 2, 3...). Si no se especifica, marca todas." },
-        pagada:       { type: "boolean", description: "true para pagada, false para no pagada" }
+        id:           { type: "integer" },
+        cuota_numero: { type: "integer" },
+        pagada:       { type: "boolean" }
       },
-      required: ["id", "pagada"]
+      required: ["id","pagada"]
     }
   }
 ];
 
-// ── Tool execution ─────────────────────────────────────────────
 function executeTool(name, input) {
   if (name === "get_tasks") {
     let result = [...tasks];
     if (input.filtro) {
       const f = input.filtro;
-      result = result.filter(t =>
-        t.estado === f || t.urgencia === f ||
-        t.nombre.toLowerCase().includes(f.toLowerCase())
-      );
+      result = result.filter(t => t.estado===f || t.urgencia===f || t.nombre.toLowerCase().includes(f.toLowerCase()));
     }
-    if (result.length === 0) return { ok: true, data: [], message: "No hay tareas." };
     return { ok: true, data: result, total: result.length };
   }
 
   if (name === "create_task") {
     const numCuotas = input.cuotas || 1;
-    const cuotaList = Array.from({ length: numCuotas }, (_, i) => ({
-      n: i + 1,
-      monto: input.monto ? input.monto / numCuotas : 0,
-      pagada: false
-    }));
     const task = {
-      id:       taskIdCounter++,
+      id: taskIdCounter++,
       nombre:   input.nombre,
       estado:   input.estado   || "Pendiente",
       urgencia: input.urgencia || "Media",
       fecha:    input.fecha    || "",
       monto:    input.monto    || 0,
       cuotas:   numCuotas,
-      cuotaList,
+      cuotaList: Array.from({ length: numCuotas }, (_,i) => ({ n:i+1, monto: input.monto ? input.monto/numCuotas : 0, pagada:false })),
       createdAt: new Date().toISOString()
     };
     tasks.unshift(task);
-    return { ok: true, task, message: `Tarea #${task.id} creada.` };
+    return { ok: true, task, message: `Tarea #${task.id} "${task.nombre}" creada.` };
   }
 
   if (name === "update_task") {
     const idx = tasks.findIndex(t => t.id === input.id);
-    if (idx === -1) return { ok: false, message: `No encontré tarea con ID ${input.id}` };
-    const fields = ["nombre","estado","urgencia","fecha","monto"];
-    fields.forEach(f => { if (input[f] !== undefined) tasks[idx][f] = input[f]; });
+    if (idx === -1) return { ok: false, message: `No encontré tarea #${input.id}` };
+    ["nombre","estado","urgencia","fecha","monto"].forEach(f => { if (input[f] !== undefined) tasks[idx][f] = input[f]; });
     return { ok: true, task: tasks[idx], message: `Tarea #${input.id} actualizada.` };
   }
 
   if (name === "delete_task") {
     const before = tasks.length;
     tasks = tasks.filter(t => t.id !== input.id);
-    if (tasks.length === before) return { ok: false, message: `No encontré tarea con ID ${input.id}` };
-    return { ok: true, message: `Tarea #${input.id} eliminada.` };
+    return tasks.length < before ? { ok: true, message: `Tarea #${input.id} eliminada.` } : { ok: false, message: `No encontré tarea #${input.id}` };
   }
 
   if (name === "mark_cuota_pagada") {
     const task = tasks.find(t => t.id === input.id);
-    if (!task) return { ok: false, message: `No encontré tarea con ID ${input.id}` };
+    if (!task) return { ok: false, message: `No encontré tarea #${input.id}` };
     if (input.cuota_numero) {
       const c = task.cuotaList.find(c => c.n === input.cuota_numero);
-      if (!c) return { ok: false, message: `No existe cuota #${input.cuota_numero}` };
-      c.pagada = input.pagada;
+      if (c) c.pagada = input.pagada;
     } else {
       task.cuotaList.forEach(c => c.pagada = input.pagada);
     }
-    const pagadas = task.cuotaList.filter(c => c.pagada).length;
-    return { ok: true, message: `Actualizado. ${pagadas}/${task.cuotaList.length} cuotas pagadas.` };
+    const pagadas = task.cuotaList.filter(c=>c.pagada).length;
+    return { ok: true, message: `${pagadas}/${task.cuotaList.length} cuotas pagadas.` };
   }
 
   return { ok: false, message: "Tool desconocida" };
 }
 
-// ── Claude agent loop ──────────────────────────────────────────
+// Keep only clean text exchanges in history (no tool blocks)
+function cleanHistory(msgs, maxPairs = 5) {
+  const clean = [];
+  for (const msg of msgs) {
+    if (typeof msg.content === "string" && msg.content.trim()) {
+      clean.push(msg);
+    }
+  }
+  return clean.slice(-(maxPairs * 2));
+}
+
 async function runAgent(chatId, userMessage) {
   if (!histories[chatId]) histories[chatId] = [];
 
-  histories[chatId].push({ role: "user", content: userMessage });
-
-  // Keep last 20 messages
-  if (histories[chatId].length > 20) {
-    histories[chatId] = histories[chatId].slice(-20);
-  }
-
   const systemPrompt = `Eres un asistente de productividad personal que gestiona el to-do list del usuario.
-Eres conciso, amable y útil. Respondes en español.
-Cuando el usuario pida agregar, editar, eliminar o consultar tareas, usa las herramientas disponibles.
-Para listar tareas, usa un formato claro con emojis. Ejemplo:
-• #1 ✅ *Llamar a Juan* — Alta | 2024-03-10
-• #2 🔄 *Reunión* — Media
-• #3 ⏳ *Revisar doc* — Baja
-
+Eres conciso, amable y respondes en español.
+Para listar tareas usa este formato:
+• #ID EMOJI *Nombre* — URGENCIA_EMOJI Urgencia | Estado
 Estados: ⏳ Pendiente | 🔄 En progreso | ✅ Listo
 Urgencia: 🔴 Alta | 🟡 Media | 🟢 Baja
+Cuando el usuario pida agregar MÚLTIPLES tareas, llama create_task individualmente por cada una.
+Confirma las acciones brevemente.`;
 
-Si el usuario menciona monto y cuotas, créalas automáticamente divididas en partes iguales.
-Siempre confirma las acciones realizadas de forma breve.`;
+  const safeHistory = cleanHistory(histories[chatId]);
+  let messages = [...safeHistory, { role: "user", content: userMessage }];
 
-  let messages = [...histories[chatId]];
-
-  // Agentic loop
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 25; i++) {
     const response = await axios.post("https://api.anthropic.com/v1/messages", {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
       tools: TOOLS,
       messages,
@@ -214,8 +189,13 @@ Siempre confirma las acciones realizadas de forma breve.`;
 
     if (stop_reason === "end_turn") {
       const text = content.filter(b => b.type === "text").map(b => b.text).join("\n");
-      histories[chatId] = messages;
-      return text;
+      // Save clean history
+      histories[chatId] = cleanHistory([
+        ...safeHistory,
+        { role: "user",      content: userMessage },
+        { role: "assistant", content: text }
+      ]);
+      return text || "✓ Listo.";
     }
 
     if (stop_reason === "tool_use") {
@@ -234,25 +214,17 @@ Siempre confirma las acciones realizadas de forma breve.`;
     }
   }
 
-  return "Lo siento, no pude completar la acción.";
+  return "No pude completar la acción, intenta de nuevo.";
 }
 
-// ── Webhook handler ────────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // Respond immediately to Telegram
-
+  res.sendStatus(200);
   const update = req.body;
   if (!update.message?.text) return;
-
   const chatId = update.message.chat.id;
   const text   = update.message.text;
-
   try {
-    // Show typing indicator
-    await axios.post(`${TELEGRAM_API}/sendChatAction`, {
-      chat_id: chatId, action: "typing"
-    });
-
+    await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: "typing" });
     const reply = await runAgent(chatId, text);
     await sendMessage(chatId, reply);
   } catch (e) {
