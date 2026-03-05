@@ -238,8 +238,6 @@ Para listar tareas usa este formato:
 Estados: ⏳ Pendiente | 🔄 En progreso | ✅ Listo
 Urgencia: 🔴 Alta | 🟡 Media | 🟢 Baja
 Cuando el usuario pida agregar MÚLTIPLES tareas, llama create_task individualmente por cada una.
-También gestionas eventos de Google Calendar: puedes ver, crear y eliminar eventos.
-Para fechas relativas (mañana, el viernes, etc) calcula la fecha exacta. Hoy es 05-03-2026.
 Confirma las acciones brevemente.`;
 
   const safeHistory = cleanHistory(histories[chatId]);
@@ -280,7 +278,7 @@ Confirma las acciones brevemente.`;
 }
 
 
-// ── Google Calendar OAuth ─────────────────────────────────────
+// Google Calendar OAuth
 app.get('/oauth/start', (req, res) => {
   const oauth2 = getOAuth2Client();
   const url = oauth2.generateAuthUrl({
@@ -432,3 +430,117 @@ app.get("/", (req, res) => res.send("Bot activo ✓"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
+
+// ── Proactive Telegram Notifications ─────────────────────────
+const CHAT_ID = process.env.CHAT_ID || "7783704824";
+
+async function sendTelegramMessage(text) {
+  await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    chat_id: CHAT_ID,
+    text,
+    parse_mode: "Markdown"
+  });
+}
+
+async function sendMorningBriefing() {
+  try {
+    const tasks = await dbGetAll();
+    const pending = tasks.filter(t => t.estado !== "Listo");
+    const top3 = [...pending]
+      .map(t => ({ ...t, score: (t.valor||5)/(t.esfuerzo||5) }))
+      .sort((a,b) => b.score - a.score)
+      .slice(0, 3);
+
+    const dateStr = new Date().toLocaleDateString("es-CL", {
+      weekday:"long", day:"numeric", month:"long", timeZone:"America/Santiago"
+    });
+    const dateCap = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+    let lines = ["*Buenos dias!*", "_" + dateCap + "_", ""];
+
+    if (top3.length) {
+      lines.push("*Top 3 tareas de hoy:*");
+      const medals = ["1.", "2.", "3."];
+      top3.forEach((t,i) => {
+        const score = Math.round((t.valor||5)/(t.esfuerzo||5)*10)/10;
+        lines.push(medals[i] + " " + t.nombre + " (score: " + score + ")");
+      });
+    } else {
+      lines.push("No tienes tareas pendientes!");
+    }
+
+    try {
+      const calMod = require("./calendar");
+      const result = await calMod.executeCalendarTool("list_events", { days: 1 });
+      if (result.events && result.events.length) {
+        lines.push("");
+        lines.push("*Eventos de hoy:*");
+        result.events.forEach(e => {
+          const time = e.start ? new Date(e.start).toLocaleTimeString("es-CL", {
+            hour:"2-digit", minute:"2-digit", timeZone:"America/Santiago"
+          }) : "";
+          lines.push("- " + time + " " + e.summary);
+        });
+      }
+    } catch(e) { /* calendar not connected */ }
+
+    await sendTelegramMessage(lines.join("\n"));
+    console.log("Morning briefing enviado");
+  } catch(e) {
+    console.error("Error morning briefing:", e.message);
+  }
+}
+
+// Check calendar every 5 min, send reminder 30 min before event
+const notifiedEvents = new Set();
+
+async function checkCalendarReminders() {
+  try {
+    const calMod = require("./calendar");
+    const result = await calMod.executeCalendarTool("list_events", { days: 1 });
+    if (!result.events || !result.events.length) return;
+    const now = new Date();
+    for (const event of result.events) {
+      if (!event.start) continue;
+      const start = new Date(event.start);
+      const diffMin = (start - now) / 1000 / 60;
+      if (diffMin > 0 && diffMin <= 30 && !notifiedEvents.has(event.id)) {
+        notifiedEvents.add(event.id);
+        const timeStr = start.toLocaleTimeString("es-CL", {
+          hour:"2-digit", minute:"2-digit", timeZone:"America/Santiago"
+        });
+        await sendTelegramMessage(
+          "Recordatorio: *" + event.summary + "* empieza en " + Math.round(diffMin) + " minutos (" + timeStr + ")"
+        );
+        console.log("Recordatorio enviado:", event.summary);
+      }
+    }
+    if (notifiedEvents.size > 200) notifiedEvents.clear();
+  } catch(e) { /* calendar not connected yet */ }
+}
+
+function scheduleMorningBriefing() {
+  function msUntilNext11UTC() {
+    const now = new Date();
+    const next = new Date();
+    next.setUTCHours(11, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    return next - now;
+  }
+  const ms = msUntilNext11UTC();
+  console.log("Morning briefing programado en " + Math.round(ms/1000/60) + " min (11:00 UTC = 07:00 Chile)");
+  setTimeout(() => {
+    sendMorningBriefing();
+    setInterval(sendMorningBriefing, 24 * 60 * 60 * 1000);
+  }, ms);
+}
+
+setInterval(checkCalendarReminders, 5 * 60 * 1000);
+scheduleMorningBriefing();
+
+// Test endpoints
+app.get("/send-briefing", (req, res) => {
+  if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  sendMorningBriefing();
+  res.json({ ok: true, message: "Enviando briefing..." });
+});
