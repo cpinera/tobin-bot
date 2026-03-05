@@ -292,3 +292,106 @@ app.get("/", (req, res) => res.send("Bot activo ✓"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
+
+// ── Daily email digest ────────────────────────────────────────
+const RESEND_KEY = process.env.RESEND_KEY;
+const EMAIL_TO   = process.env.EMAIL_TO;
+
+async function sendDailyDigest() {
+  try {
+    const tasks = await dbGetAll();
+    const pending = tasks.filter(t => t.estado !== "Listo");
+    const top3 = [...pending]
+      .map(t => ({ ...t, score: (t.valor||5) / (t.esfuerzo||5) }))
+      .sort((a,b) => b.score - a.score)
+      .slice(0, 3);
+
+    if (!top3.length) return console.log("No hay tareas pendientes.");
+
+    const today = new Date().toLocaleDateString("es-CL", {
+      weekday:"long", year:"numeric", month:"long", day:"numeric", timeZone:"America/Santiago"
+    });
+    const todayCap = today.charAt(0).toUpperCase() + today.slice(1);
+    const dateShort = new Date().toLocaleDateString("es-CL", { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"America/Santiago" });
+
+    const tdBase = 'style="padding:14px 16px;border-bottom:1px solid #1e1e24;font-family:monospace"';
+    const rows = top3.map((t,i) => {
+      const score = Math.round(t.score * 10) / 10;
+      const estado = t.estado === "En progreso" ? "🔄 En progreso" : "⏳ Pendiente";
+      return `<tr>
+        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;font-family:monospace;font-size:14px;color:#f0f0ee">
+          <span style="color:#c8f060;font-weight:700;margin-right:8px">#${i+1}</span>${t.nombre}
+        </td>
+        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:12px;color:#7a7a8a;font-family:monospace">${t.valor||5}/${t.esfuerzo||5}</td>
+        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center">
+          <span style="background:rgba(200,240,96,0.15);color:#c8f060;font-size:11px;padding:3px 10px;border-radius:4px;font-weight:700;font-family:monospace">${score}</span>
+        </td>
+        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:11px;color:#7a7a8a;font-family:monospace">${estado}</td>
+        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:11px;color:#7a7a8a;font-family:monospace">${t.fecha || "-"}</td>
+      </tr>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="background:#0e0e10;margin:0;padding:32px 16px">
+  <div style="max-width:560px;margin:0 auto">
+    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#c8f060;margin-bottom:8px;font-family:monospace">● to-do diario</div>
+    <h1 style="font-family:sans-serif;font-size:26px;font-weight:900;color:#f0f0ee;margin:0 0 4px">Top 3 tareas</h1>
+    <p style="font-size:13px;color:#7a7a8a;margin:0 0 24px;font-family:monospace">${todayCap}</p>
+    <table style="width:100%;border-collapse:collapse;background:#18181c;border:1px solid #2e2e38;border-radius:12px;overflow:hidden">
+      <thead><tr style="background:#111114">
+        <th style="padding:10px 16px;text-align:left;font-size:10px;color:#5a5a6a;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;font-weight:500">Tarea</th>
+        <th style="padding:10px 16px;text-align:center;font-size:10px;color:#5a5a6a;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;font-weight:500">V/E</th>
+        <th style="padding:10px 16px;text-align:center;font-size:10px;color:#5a5a6a;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;font-weight:500">Score</th>
+        <th style="padding:10px 16px;text-align:center;font-size:10px;color:#5a5a6a;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;font-weight:500">Estado</th>
+        <th style="padding:10px 16px;text-align:center;font-size:10px;color:#5a5a6a;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;font-weight:500">Fecha</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="margin-top:20px;padding:14px 16px;background:#18181c;border:1px solid #2e2e38;border-radius:10px">
+      <p style="font-size:12px;color:#5a5a6a;margin:0;font-family:monospace">
+        ${pending.length} tareas pendientes en total &nbsp;·&nbsp;
+        <a href="https://tobin-todo-web.vercel.app" style="color:#c8f060;text-decoration:none">Ver todas →</a>
+      </p>
+    </div>
+  </div>
+</body></html>`;
+
+    await axios.post("https://api.resend.com/emails", {
+      from:    "To-Do Tobin <onboarding@resend.dev>",
+      to:      EMAIL_TO,
+      subject: `To-Do ${dateShort}`,
+      html
+    }, {
+      headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" }
+    });
+
+    console.log("Email diario enviado a", EMAIL_TO);
+  } catch(e) {
+    console.error("Error enviando email:", e.response?.data || e.message);
+  }
+}
+
+function scheduleDailyEmail() {
+  function msUntilNext11UTC() {
+    const now = new Date();
+    const next = new Date();
+    next.setUTCHours(11, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    return next - now;
+  }
+  const ms = msUntilNext11UTC();
+  console.log(`Email programado en ${Math.round(ms/1000/60)} minutos (11:00 UTC = 07:00 Chile)`);
+  setTimeout(() => {
+    sendDailyDigest();
+    setInterval(sendDailyDigest, 24 * 60 * 60 * 1000);
+  }, ms);
+}
+
+scheduleDailyEmail();
+
+// Endpoint para probar el email manualmente
+app.get("/send-digest", (req, res) => {
+  if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  sendDailyDigest();
+  res.json({ ok: true, message: "Enviando digest..." });
+});
