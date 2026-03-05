@@ -424,6 +424,37 @@ function scheduleDailyEmail() {
 
 scheduleDailyEmail();
 
+
+// ── Cuentas API ───────────────────────────────────────────────
+app.get('/cuentas', auth, async (req, res) => {
+  try {
+    const r = await axios.get(`${SUPABASE_URL}/rest/v1/cuentas?order=nombre`, { headers: SUPA_HEADERS });
+    res.json({ cuentas: r.data });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/cuentas', auth, async (req, res) => {
+  try {
+    const { nombre, mes, anio, monto, estado } = req.body;
+    const r = await axios.post(`${SUPABASE_URL}/rest/v1/cuentas`, { nombre, mes, anio, monto: monto||0, estado: estado||'Por pagar' }, { headers: SUPA_HEADERS });
+    res.json({ cuenta: r.data[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/cuentas/:id', auth, async (req, res) => {
+  try {
+    const r = await axios.patch(`${SUPABASE_URL}/rest/v1/cuentas?id=eq.${req.params.id}`, req.body, { headers: SUPA_HEADERS });
+    res.json({ cuenta: r.data[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/cuentas/:id', auth, async (req, res) => {
+  try {
+    await axios.delete(`${SUPABASE_URL}/rest/v1/cuentas?id=eq.${req.params.id}`, { headers: SUPA_HEADERS });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/send-digest", (req, res) => {
   if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
   sendDailyDigest();
