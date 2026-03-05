@@ -65,6 +65,12 @@ async function getCalendar() {
   return google.calendar({ version: "v3", auth: oauth2 });
 }
 
+async function listCalendars() {
+  const cal = await getCalendar();
+  const res = await cal.calendarList.list();
+  return res.data.items || [];
+}
+
 async function listEvents(days = 1) {
   const cal = await getCalendar();
   const now = new Date();
@@ -81,10 +87,10 @@ async function listEvents(days = 1) {
   return res.data.items || [];
 }
 
-async function createEvent(summary, startDateTime, endDateTime, description) {
+async function createEvent(summary, startDateTime, endDateTime, description, calendarId) {
   const cal = await getCalendar();
   const res = await cal.events.insert({
-    calendarId: "primary",
+    calendarId: calendarId || "primary",
     resource: {
       summary,
       description: description || "",
@@ -101,6 +107,11 @@ async function deleteEvent(eventId) {
 }
 
 const CALENDAR_TOOLS = [
+  {
+    name: "list_calendars",
+    description: "Lista todos los calendarios disponibles en la cuenta Google del usuario.",
+    input_schema: { type: "object", properties: {} }
+  },
   {
     name: "list_events",
     description: "Lista eventos del calendario. days=1 para hoy, days=7 para esta semana.",
@@ -135,6 +146,10 @@ const CALENDAR_TOOLS = [
 ];
 
 async function executeCalendarTool(name, input) {
+  if (name === "list_calendars") {
+    const cals = await listCalendars();
+    return { ok: true, calendars: cals.map(c => ({ id: c.id, name: c.summary, primary: c.primary || false })) };
+  }
   if (name === "list_events") {
     const events = await listEvents(input.days || 1);
     if (!events.length) return { ok: true, message: "No hay eventos próximos.", events: [] };

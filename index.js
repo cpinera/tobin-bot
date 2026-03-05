@@ -178,7 +178,7 @@ const TOOLS = [...CALENDAR_TOOLS,
 ];
 
 async function executeTool(name, input) {
-  if (["list_events","create_event","delete_event"].includes(name)) {
+  if (["list_events","create_event","delete_event","list_calendars"].includes(name)) {
     try { return await executeCalendarTool(name, input); }
     catch(e) { return { ok:false, message: e.message }; }
   }
