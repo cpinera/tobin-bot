@@ -288,13 +288,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => res.send("Bot activo ✓"));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
-
-// ── Daily email digest ────────────────────────────────────────
-const RESEND_KEY = process.env.RESEND_KEY;
 const EMAIL_TO   = process.env.EMAIL_TO;
 
 async function sendDailyDigest() {
@@ -312,26 +305,35 @@ async function sendDailyDigest() {
       weekday:"long", year:"numeric", month:"long", day:"numeric", timeZone:"America/Santiago"
     });
     const todayCap = today.charAt(0).toUpperCase() + today.slice(1);
-    const dateShort = new Date().toLocaleDateString("es-CL", { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"America/Santiago" });
+    const dateShort = new Date().toLocaleDateString("es-CL", {
+      day:"2-digit", month:"2-digit", year:"numeric", timeZone:"America/Santiago"
+    });
 
-    const tdBase = 'style="padding:14px 16px;border-bottom:1px solid #1e1e24;font-family:monospace"';
-    const rows = top3.map((t,i) => {
+    const rows = top3.map((t, i) => {
       const score = Math.round(t.score * 10) / 10;
       const estado = t.estado === "En progreso" ? "🔄 En progreso" : "⏳ Pendiente";
-      return `<tr>
-        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;font-family:monospace;font-size:14px;color:#f0f0ee">
-          <span style="color:#c8f060;font-weight:700;margin-right:8px">#${i+1}</span>${t.nombre}
-        </td>
-        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:12px;color:#7a7a8a;font-family:monospace">${t.valor||5}/${t.esfuerzo||5}</td>
-        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center">
-          <span style="background:rgba(200,240,96,0.15);color:#c8f060;font-size:11px;padding:3px 10px;border-radius:4px;font-weight:700;font-family:monospace">${score}</span>
-        </td>
-        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:11px;color:#7a7a8a;font-family:monospace">${estado}</td>
-        <td ${tdBase} style="padding:14px 16px;border-bottom:1px solid #1e1e24;text-align:center;font-size:11px;color:#7a7a8a;font-family:monospace">${t.fecha || "-"}</td>
-      </tr>`;
+      const numColor   = i===0 ? "#1a73e8" : i===1 ? "#34a853" : "#f29900";
+      const scoreColor = score >= 2 ? "#1e8e3e" : score >= 1 ? "#f29900" : "#5f6368";
+      const scoreBg    = score >= 2 ? "#e6f4ea" : score >= 1 ? "#fef7e0" : "#f1f3f4";
+      return `<div style="padding:20px 24px;border-bottom:1px solid #e8eaed">
+        <div style="display:flex;align-items:flex-start;gap:14px">
+          <div style="min-width:28px;height:28px;border-radius:50%;background:${numColor};color:#fff;font-size:13px;font-weight:700;text-align:center;line-height:28px;flex-shrink:0">${i+1}</div>
+          <div style="flex:1">
+            <p style="margin:0 0 8px;font-size:16px;font-weight:600;color:#202124;line-height:1.4">${t.nombre}</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <span style="font-size:12px;color:#5f6368">${estado}</span>
+              <span style="color:#dadce0;font-size:12px">·</span>
+              <span style="font-size:12px;color:#5f6368">Valor ${t.valor||5} / Esfuerzo ${t.esfuerzo||5}</span>
+              <span style="color:#dadce0;font-size:12px">·</span>
+              <span style="background:${scoreBg};color:${scoreColor};font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px">Score ${score}</span>
+              ${t.fecha ? `<span style="color:#dadce0;font-size:12px">·</span><span style="font-size:12px;color:#5f6368">📅 ${t.fecha}</span>` : ""}
+            </div>
+          </div>
+        </div>
+      </div>`;
     }).join("");
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f8f9fa;font-family:Roboto,Arial,sans-serif">
   <div style="max-width:600px;margin:0 auto;padding:32px 16px">
     <div style="margin-bottom:24px">
@@ -342,52 +344,15 @@ async function sendDailyDigest() {
       <div style="padding:14px 24px;border-bottom:1px solid #e8eaed;background:#f8f9fa">
         <p style="margin:0;font-size:11px;font-weight:600;color:#5f6368;letter-spacing:0.5px;text-transform:uppercase">Tus 3 tareas prioritarias</p>
       </div>
-      ${top3.map((t,i) => {
-        const score = Math.round(t.score * 10) / 10;
-        const estado = t.estado === 'En progreso' ? '🔄 En progreso' : '⏳ Pendiente';
-        const numColor = i===0 ? '#1a73e8' : i===1 ? '#34a853' : '#f29900';
-        const scoreColor = score >= 2 ? '#1e8e3e' : score >= 1 ? '#f29900' : '#5f6368';
-        const scoreBg    = score >= 2 ? '#e6f4ea' : score >= 1 ? '#fef7e0' : '#f1f3f4';
-        return `<div style="padding:20px 24px;border-bottom:1px solid #e8eaed">
-          <div style="display:flex;align-items:flex-start;gap:14px">
-            <div style="min-width:28px;height:28px;border-radius:50%;background:${numColor};color:#fff;font-size:13px;font-weight:700;text-align:center;line-height:28px;flex-shrink:0">${i+1}</div>
-            <div style="flex:1">
-              <p style="margin:0 0 8px;font-size:16px;font-weight:600;color:#202124;line-height:1.4">${t.nombre}</p>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <span style="font-size:12px;color:#5f6368">${estado}</span>
-                <span style="color:#dadce0;font-size:12px">·</span>
-                <span style="font-size:12px;color:#5f6368">Valor ${t.valor||5} / Esfuerzo ${t.esfuerzo||5}</span>
-                <span style="color:#dadce0;font-size:12px">·</span>
-                <span style="background:${scoreBg};color:${scoreColor};font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px">Score ${score}</span>
-                ${t.fecha ? `<span style="color:#dadce0;font-size:12px">·</span><span style="font-size:12px;color:#5f6368">📅 ${t.fecha}</span>` : ''}
-              </div>
-            </div>
-          </div>
-        </div>`;
-      }).join('')}
+      ${rows}
       <div style="padding:14px 24px;background:#f8f9fa">
         <p style="margin:0;font-size:13px;color:#5f6368">${pending.length} tareas pendientes en total</p>
       </div>
     </div>
     <div style="text-align:center;margin-bottom:28px">
-      <a href="https://tobin-todo-web.vercel.app" style="display:inline-block;background:#1a73e8;color:#ffffff;text-decoration:none;padding:11px 32px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:0.25px">Ver todas las tareas →</a>
+      <a href="https://tobin-todo-web.vercel.app" style="display:inline-block;background:#1a73e8;color:#ffffff;text-decoration:none;padding:11px 32px;border-radius:8px;font-size:14px;font-weight:600">Ver todas las tareas →</a>
     </div>
     <p style="text-align:center;font-size:12px;color:#9aa0a6;margin:0">To-Do Tobin · <a href="https://tobin-todo-web.vercel.app" style="color:#9aa0a6;text-decoration:none">tantauco.vc</a></p>
-  </div>
-</body></html>`;
-      }).join('')}
-      <div style='padding:16px 24px;background:#f8f9fa'>
-        <p style='margin:0;font-size:13px;color:#5f6368'>${pending.length} tareas pendientes en total</p>
-      </div>
-    </div>
-
-    <!-- CTA -->
-    <div style='text-align:center;margin-bottom:32px'>
-      <a href='https://tobin-todo-web.vercel.app' style='display:inline-block;background:#1a73e8;color:#ffffff;text-decoration:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:500;letter-spacing:0.25px'>Ver todas las tareas</a>
-    </div>
-
-    <!-- Footer -->
-    <p style='text-align:center;font-size:12px;color:#9aa0a6;margin:0'>Enviado por To-Do Tobin · <a href='https://tobin-todo-web.vercel.app' style='color:#9aa0a6'>Gestionar tareas</a></p>
   </div>
 </body></html>`;
 
@@ -424,9 +389,13 @@ function scheduleDailyEmail() {
 
 scheduleDailyEmail();
 
-// Endpoint para probar el email manualmente
 app.get("/send-digest", (req, res) => {
   if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
   sendDailyDigest();
   res.json({ ok: true, message: "Enviando digest..." });
 });
+
+app.get("/", (req, res) => res.send("Bot activo ✓"));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
