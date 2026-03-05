@@ -46,7 +46,9 @@ async function dbCreate(data) {
     fecha:     data.fecha     || "",
     monto:     data.monto     || 0,
     cuotas:    data.cuotas    || 1,
-    cuota_list: data.cuotaList || []
+    cuota_list: data.cuotaList || [],
+    valor:     data.valor    || 5,
+    esfuerzo:  data.esfuerzo || 5
   }, { headers: SUPA_HEADERS });
   const row = res.data[0];
   return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], createdAt:row.created_at };
