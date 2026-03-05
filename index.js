@@ -231,13 +231,17 @@ function cleanHistory(msgs, maxPairs=5) {
 
 async function runAgent(chatId, userMessage) {
   if (!histories[chatId]) histories[chatId] = [];
+  const today = new Date().toLocaleDateString("es-CL", {weekday:"long",year:"numeric",month:"long",day:"numeric",timeZone:"America/Santiago"});
+  const todayISO = new Date().toLocaleDateString("en-CA", {timeZone:"America/Santiago"});
   const systemPrompt = `Eres un asistente de productividad personal que gestiona el to-do list del usuario.
 Eres conciso, amable y respondes en español.
+Hoy es ${today} (${todayISO}). Usa SIEMPRE esta fecha como referencia para calcular fechas relativas como "hoy", "mañana", "el viernes", etc.
 Para listar tareas usa este formato:
 • #ID EMOJI *Nombre* — URGENCIA
 Estados: ⏳ Pendiente | 🔄 En progreso | ✅ Listo
 Urgencia: 🔴 Alta | 🟡 Media | 🟢 Baja
 Cuando el usuario pida agregar MÚLTIPLES tareas, llama create_task individualmente por cada una.
+Para eventos de calendario, las fechas en ISO 8601 con timezone Chile: ${todayISO}T14:00:00-03:00
 Confirma las acciones brevemente.`;
 
   const safeHistory = cleanHistory(histories[chatId]);
