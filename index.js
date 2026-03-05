@@ -34,6 +34,8 @@ async function dbGetAll() {
     monto:     row.monto,
     cuotas:    row.cuotas,
     cuotaList: row.cuota_list || [],
+    valor:     row.valor    || 5,
+    esfuerzo:  row.esfuerzo || 5,
     createdAt: row.created_at
   }));
 }
@@ -51,7 +53,7 @@ async function dbCreate(data) {
     esfuerzo:  data.esfuerzo || 5
   }, { headers: SUPA_HEADERS });
   const row = res.data[0];
-  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], createdAt:row.created_at };
+  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], valor:row.valor||5, esfuerzo:row.esfuerzo||5, createdAt:row.created_at };
 }
 
 async function dbUpdate(id, data) {
@@ -62,9 +64,11 @@ async function dbUpdate(id, data) {
   if (data.fecha     !== undefined) body.fecha     = data.fecha;
   if (data.monto     !== undefined) body.monto     = data.monto;
   if (data.cuotaList !== undefined) body.cuota_list = data.cuotaList;
+  if (data.valor     !== undefined) body.valor     = data.valor;
+  if (data.esfuerzo  !== undefined) body.esfuerzo  = data.esfuerzo;
   const res = await axios.patch(`${SUPABASE_URL}/rest/v1/tasks?id=eq.${id}`, body, { headers: SUPA_HEADERS });
   const row = res.data[0];
-  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[] };
+  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], valor:row.valor||5, esfuerzo:row.esfuerzo||5 };
 }
 
 async function dbDelete(id) {
