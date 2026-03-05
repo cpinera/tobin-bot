@@ -1,4 +1,5 @@
 const express = require("express");
+const { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens } = require("./calendar");
 const axios   = require("axios");
 
 const app = express();
@@ -118,7 +119,7 @@ async function sendMessage(chatId, text) {
 }
 
 // ── Tools ─────────────────────────────────────────────────────
-const TOOLS = [
+const TOOLS = [...CALENDAR_TOOLS,
   {
     name: "get_tasks",
     description: "Obtiene todas las tareas del to-do list.",
@@ -177,6 +178,10 @@ const TOOLS = [
 ];
 
 async function executeTool(name, input) {
+  if (["list_events","create_event","delete_event"].includes(name)) {
+    try { return await executeCalendarTool(name, input); }
+    catch(e) { return { ok:false, message: e.message }; }
+  }
   if (name === "get_tasks") {
     let tasks = await dbGetAll();
     if (input.filtro) {
@@ -233,6 +238,8 @@ Para listar tareas usa este formato:
 Estados: ⏳ Pendiente | 🔄 En progreso | ✅ Listo
 Urgencia: 🔴 Alta | 🟡 Media | 🟢 Baja
 Cuando el usuario pida agregar MÚLTIPLES tareas, llama create_task individualmente por cada una.
+También gestionas eventos de Google Calendar: puedes ver, crear y eliminar eventos.
+Para fechas relativas (mañana, el viernes, etc) calcula la fecha exacta. Hoy es 05-03-2026.
 Confirma las acciones brevemente.`;
 
   const safeHistory = cleanHistory(histories[chatId]);
@@ -271,6 +278,31 @@ Confirma las acciones brevemente.`;
   }
   return "No pude completar la acción, intenta de nuevo.";
 }
+
+
+// ── Google Calendar OAuth ─────────────────────────────────────
+app.get('/oauth/start', (req, res) => {
+  const oauth2 = getOAuth2Client();
+  const url = oauth2.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/calendar'],
+    prompt: 'consent'
+  });
+  res.redirect(url);
+});
+
+app.get('/oauth/callback', async (req, res) => {
+  const { code } = req.query;
+  try {
+    const oauth2 = getOAuth2Client();
+    const { tokens } = await oauth2.getToken(code);
+    setTokens(tokens);
+    console.log('Google Calendar autorizado');
+    res.send('<h2>Google Calendar conectado</h2><p>Puedes cerrar esta ventana.</p>');
+  } catch(e) {
+    res.send('<h2>Error: ' + e.message + '</h2>');
+  }
+});
 
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
