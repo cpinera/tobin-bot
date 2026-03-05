@@ -288,6 +288,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+const RESEND_KEY = process.env.RESEND_KEY;
 const EMAIL_TO   = process.env.EMAIL_TO;
 
 async function sendDailyDigest() {
