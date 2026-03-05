@@ -77,7 +77,7 @@ async function listEvents(days = 1) {
   const end = new Date();
   end.setDate(end.getDate() + days);
   const res = await cal.events.list({
-    calendarId: "primary",
+    calendarId: "cristobal@tantauco.vc",
     timeMin: now.toISOString(),
     timeMax: end.toISOString(),
     singleEvents: true,
@@ -90,7 +90,7 @@ async function listEvents(days = 1) {
 async function createEvent(summary, startDateTime, endDateTime, description, calendarId) {
   const cal = await getCalendar();
   const res = await cal.events.insert({
-    calendarId: calendarId || "primary",
+    calendarId: calendarId || "cristobal@tantauco.vc",
     resource: {
       summary,
       description: description || "",
@@ -103,7 +103,7 @@ async function createEvent(summary, startDateTime, endDateTime, description, cal
 
 async function deleteEvent(eventId) {
   const cal = await getCalendar();
-  await cal.events.delete({ calendarId: "primary", eventId });
+  await cal.events.delete({ calendarId: "cristobal@tantauco.vc", eventId });
 }
 
 const CALENDAR_TOOLS = [
