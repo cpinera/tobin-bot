@@ -1,14 +1,61 @@
 const { google } = require("googleapis");
+const axios = require("axios");
 
 const GCAL_CLIENT_ID     = process.env.GCAL_CLIENT_ID;
 const GCAL_CLIENT_SECRET = process.env.GCAL_CLIENT_SECRET;
 const GCAL_REDIRECT_URI  = "https://tobin-bot-production.up.railway.app/oauth/callback";
 
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const SUPA_HEADERS = {
+  "apikey": SUPABASE_KEY,
+  "Authorization": `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json",
+  "Prefer": "return=representation"
+};
+
 let gcalTokens = null;
+
+// Load tokens from Supabase on startup
+async function loadTokens() {
+  try {
+    const res = await axios.get(`${SUPABASE_URL}/rest/v1/calendar_tokens?id=eq.1`, { headers: SUPA_HEADERS });
+    if (res.data && res.data.length > 0) {
+      gcalTokens = res.data[0].tokens;
+      console.log("Google Calendar tokens cargados desde Supabase");
+    }
+  } catch(e) {
+    console.log("No hay tokens de calendario guardados:", e.message);
+  }
+}
+
+// Save tokens to Supabase
+async function saveTokens(tokens) {
+  gcalTokens = tokens;
+  try {
+    await axios.post(`${SUPABASE_URL}/rest/v1/calendar_tokens`, {
+      id: 1,
+      tokens,
+      updated_at: new Date().toISOString()
+    }, {
+      headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=representation" }
+    });
+    console.log("Tokens guardados en Supabase");
+  } catch(e) {
+    console.error("Error guardando tokens:", e.message);
+  }
+}
 
 function getOAuth2Client() {
   const oauth2 = new google.auth.OAuth2(GCAL_CLIENT_ID, GCAL_CLIENT_SECRET, GCAL_REDIRECT_URI);
-  if (gcalTokens) oauth2.setCredentials(gcalTokens);
+  if (gcalTokens) {
+    oauth2.setCredentials(gcalTokens);
+    // Auto-save refreshed tokens
+    oauth2.on("tokens", (newTokens) => {
+      const merged = { ...gcalTokens, ...newTokens };
+      saveTokens(merged);
+    });
+  }
   return oauth2;
 }
 
@@ -110,4 +157,7 @@ async function executeCalendarTool(name, input) {
   return { ok: false, message: "Tool desconocida" };
 }
 
-module.exports = { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, gcalTokens: () => gcalTokens, setTokens: (t) => { gcalTokens = t; } };
+// Load tokens when module is first imported
+loadTokens();
+
+module.exports = { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens: saveTokens };
