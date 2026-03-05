@@ -357,7 +357,7 @@ async function sendDailyDigest() {
 </body></html>`;
 
     await axios.post("https://api.resend.com/emails", {
-      from:    "To-Do Tobin <onboarding@resend.dev>",
+      from:    "To-Do Tobin <noreply@tantauco.vc>",
       to:      EMAIL_TO,
       subject: `To-Do ${dateShort}`,
       html
