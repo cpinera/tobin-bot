@@ -163,10 +163,12 @@ async function scanEmails(sinceHours = 13) {
     });
 
     await saveEmailBatch(toSave);
-    const urgentes = toSave.filter(e => e.classification === "urgente").length;
-    const utiles   = toSave.filter(e => e.classification === "util").length;
-    console.log(`Scan completo: ${toSave.length} emails (${urgentes} urgentes, ${utiles} útiles)`);
-    return { count: toSave.length, urgentes, utiles };
+    const urgentes  = toSave.filter(e => e.classification === "urgente").length;
+    const utiles    = toSave.filter(e => e.classification === "util").length;
+    const poco_util = toSave.filter(e => e.classification === "poco_util").length;
+    const spam      = toSave.filter(e => e.classification === "spam").length;
+    console.log(`Scan completo: ${toSave.length} emails (${urgentes} priorizado, ${utiles} útiles, ${poco_util} poco útil, ${spam} spam)`);
+    return { count: toSave.length, urgentes, utiles, poco_util, spam };
   } catch(e) {
     console.error("Error en scan:", e.message);
     return { count: 0, error: e.message };
