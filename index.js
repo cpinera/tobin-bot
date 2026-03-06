@@ -1,4 +1,6 @@
 const express = require("express");
+const { getGmailAuthUrl, saveGmailTokens, getEmailBatch } = require("./gmail");
+const { scanEmails, executeApproved, skipEmails, scheduleEmailScans } = require("./email-agent");
 const { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens } = require("./calendar");
 const axios   = require("axios");
 
@@ -283,6 +285,64 @@ Confirma las acciones brevemente.`;
 
 
 // Google Calendar OAuth
+
+// ── Gmail OAuth ───────────────────────────────────────────────
+app.get('/gmail/start', (req, res) => res.redirect(getGmailAuthUrl()));
+
+app.get('/gmail/callback', async (req, res) => {
+  const { code } = req.query;
+  try {
+    const { google } = require('googleapis');
+    const oauth2 = new (require('googleapis').google.auth.OAuth2)(
+      process.env.GCAL_CLIENT_ID, process.env.GCAL_CLIENT_SECRET,
+      'https://tobin-bot-production.up.railway.app/gmail/callback'
+    );
+    const { tokens } = await oauth2.getToken(code);
+    await saveGmailTokens(tokens);
+    res.send('<h2>✅ Gmail conectado</h2><p>Puedes cerrar esta ventana.</p>');
+  } catch(e) { res.send('<h2>Error: ' + e.message + '</h2>'); }
+});
+
+// ── Email API ─────────────────────────────────────────────────
+app.get('/emails', auth, async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+    const emails = await getEmailBatch(status);
+    res.json({ emails });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/emails/scan', auth, async (req, res) => {
+  try {
+    const result = await scanEmails(req.body.hours || 13);
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/emails/execute', auth, async (req, res) => {
+  try {
+    const { gmailIds } = req.body;
+    const result = await executeApproved(gmailIds);
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/emails/skip', auth, async (req, res) => {
+  try {
+    const { gmailIds } = req.body;
+    await skipEmails(gmailIds);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/emails/:gmailId', auth, async (req, res) => {
+  try {
+    const { updateEmail } = require('./gmail');
+    await updateEmail(req.params.gmailId, req.body);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/oauth/start', (req, res) => {
   const oauth2 = getOAuth2Client();
   const url = oauth2.generateAuthUrl({
@@ -423,6 +483,7 @@ function scheduleDailyEmail() {
 }
 
 scheduleDailyEmail();
+scheduleEmailScans(sendTelegramMessage);
 
 
 // ── Cuentas API ───────────────────────────────────────────────
