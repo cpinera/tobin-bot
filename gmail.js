@@ -146,10 +146,21 @@ function makeRaw(to, subject, body, replyToId) {
 async function saveEmailBatch(emails) {
   for (const e of emails) {
     try {
+      // Try upsert first - update if exists, insert if not
       await axios.post(`${SUPABASE_URL}/rest/v1/email_inbox`, e, {
-        headers: { ...SUPA_HEADERS, "Prefer": "resolution=merge-duplicates,return=representation" }
+        headers: { 
+          ...SUPA_HEADERS, 
+          "Prefer": "resolution=merge-duplicates,return=representation",
+          "on_conflict": "gmail_id"
+        }
       });
-    } catch(err) { console.error("Error guardando email:", err.message); }
+    } catch(err) {
+      if (err.response && err.response.status === 409) {
+        // Already exists and approved/skipped - skip silently
+      } else {
+        console.error("Error guardando email:", err.message);
+      }
+    }
   }
 }
 

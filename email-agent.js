@@ -130,7 +130,7 @@ ${JSON.stringify(emails.map(e => ({ id: e.id, from: e.from, subject: e.subject, 
   }
 }
 
-async function scanEmails(sinceHours = 13) {
+async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
   if (!isConnected()) { console.log("Gmail no conectado"); return { count: 0 }; }
   console.log("Iniciando scan de emails...");
   try {
@@ -168,7 +168,23 @@ async function scanEmails(sinceHours = 13) {
     const poco_util = toSave.filter(e => e.classification === "poco_util").length;
     const spam      = toSave.filter(e => e.classification === "spam").length;
     console.log(`Scan completo: ${toSave.length} emails (${urgentes} priorizado, ${utiles} útiles, ${poco_util} poco útil, ${spam} spam)`);
-    return { count: toSave.length, urgentes, utiles, poco_util, spam };
+    const result = { count: toSave.length, urgentes, utiles, poco_util, spam };
+
+    // Send Telegram summary if callback provided
+    if (toSave.length > 0 && sendTelegramCb) {
+      const lines = ["📧 *Revisión de emails*", ""];
+      if (urgentes > 0)   lines.push(`🔴 *Priorizado:* ${urgentes}`);
+      if (utiles > 0)     lines.push(`🔵 *Útil:* ${utiles}`);
+      if (poco_util > 0)  lines.push(`⚪ *Poco útil:* ${poco_util}`);
+      if (spam > 0)       lines.push(`⛔ *Spam:* ${spam}`);
+      lines.push("");
+      lines.push(`📬 *Total:* ${toSave.length} emails`);
+      lines.push("");
+      lines.push(`👉 [Revisar en la app](https://tobin-todo-web.vercel.app)`);
+      await sendTelegramCb(lines.join("\n"));
+    }
+
+    return result;
   } catch(e) {
     console.error("Error en scan:", e.message);
     return { count: 0, error: e.message };
@@ -227,7 +243,7 @@ function scheduleEmailScans(sendTelegram) {
 
   async function runScan(label) {
     console.log(`Scan de emails ${label}...`);
-    const result = await scanEmails(13);
+    const result = await scanEmails(13, sendTelegram);
     if (result.count > 0 && sendTelegram) {
       const msg = `📧 *Revisión de emails ${label}*\n${result.count} emails nuevos · ${result.urgentes || 0} urgentes · ${result.utiles || 0} útiles\n\nRevisa en: https://tobin-todo-web.vercel.app`;
       await sendTelegram(msg);

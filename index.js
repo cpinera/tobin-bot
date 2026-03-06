@@ -314,7 +314,7 @@ app.get('/emails', auth, async (req, res) => {
 
 app.post('/emails/scan', auth, async (req, res) => {
   try {
-    const result = await scanEmails(req.body.hours || 13);
+    const result = await scanEmails(req.body.hours || 13, sendTelegramMessage);
     res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
