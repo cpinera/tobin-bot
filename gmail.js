@@ -125,6 +125,18 @@ async function applyLabel(emailId, labelName) {
   await gmail.users.messages.modify({ userId: "me", id: emailId, resource: { addLabelIds: [labelId] } });
 }
 
+
+async function starEmail(emailId) {
+  const gmail = await getGmail();
+  await gmail.users.messages.modify({ userId: "me", id: emailId, resource: { addLabelIds: ["STARRED"] } });
+}
+
+async function labelPrioritario(emailId) {
+  const gmail = await getGmail();
+  const labelId = await ensureLabel(gmail, "Prioritario-Tobin");
+  await gmail.users.messages.modify({ userId: "me", id: emailId, resource: { addLabelIds: [labelId] } });
+}
+
 function makeRaw(to, subject, body, replyToId) {
   const msg = [`To: ${to}`, `Subject: Re: ${subject}`, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0", "", body].join("\n");
   return Buffer.from(msg).toString("base64url");

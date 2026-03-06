@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, createDraft, applyLabel, isConnected } = require("./gmail");
+const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, createDraft, applyLabel, starEmail, labelPrioritario, isConnected } = require("./gmail");
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 
@@ -94,7 +94,7 @@ Best,
 Cristobal"
 
 REGLAS DE ACCION:
-- urgente → accion: "responder" (genera borrador contextual personalizado)
+- urgente → accion: "responder" (genera borrador contextual personalizado) + se marcará con estrella y etiqueta Prioritario en Gmail
 - util → accion: "etiquetar_util"
 - poco_util → accion: "archivar"
 - spam → accion: "marcar_spam"
@@ -188,6 +188,12 @@ async function executeApproved(gmailIds) {
       if (action === "archivar")       await archiveEmail(email.gmail_id);
       if (action === "marcar_spam")    await markAsSpam(email.gmail_id);
       if (action === "etiquetar_util") await applyLabel(email.gmail_id, "Útil-Tobin");
+      // Urgente: star + label Prioritario
+      const classification = correction?.classification || email.classification;
+      if (classification === "urgente") {
+        await starEmail(email.gmail_id);
+        await labelPrioritario(email.gmail_id);
+      }
       if (action === "responder" && draftReply) {
         const to = email.from_email.match(/<(.+)>/)?.[1] || email.from_email;
         await createDraft(email.gmail_id, email.thread_id, to, email.subject, draftReply);
