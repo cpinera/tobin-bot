@@ -212,6 +212,7 @@ loadGmailTokens();
 module.exports = {
   getGmailAuthUrl, saveGmailTokens, getGmail,
   fetchNewEmails, archiveEmail, markAsSpam, createDraft, applyLabel,
+  starEmail, labelPrioritario, getEmailBody,
   saveEmailBatch, getEmailBatch, updateEmail,
   isConnected: () => !!gmailTokens
 };
