@@ -137,6 +137,32 @@ async function labelPrioritario(emailId) {
   await gmail.users.messages.modify({ userId: "me", id: emailId, resource: { addLabelIds: [labelId] } });
 }
 
+
+async function getEmailBody(emailId) {
+  const gmail = await getGmail();
+  const msg = await gmail.users.messages.get({ userId: "me", id: emailId, format: "full" });
+  const payload = msg.data.payload;
+  
+  // Extract text body
+  function extractBody(part) {
+    if (!part) return "";
+    if (part.mimeType === "text/plain" && part.body && part.body.data) {
+      return Buffer.from(part.body.data, "base64url").toString("utf-8");
+    }
+    if (part.parts) {
+      for (const p of part.parts) {
+        const text = extractBody(p);
+        if (text) return text;
+      }
+    }
+    return "";
+  }
+  
+  const body = extractBody(payload);
+  // Clean up excessive whitespace
+  return body.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 3000);
+}
+
 function makeRaw(to, subject, body, replyToId) {
   const msg = [`To: ${to}`, `Subject: Re: ${subject}`, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0", "", body].join("\n");
   return Buffer.from(msg).toString("base64url");

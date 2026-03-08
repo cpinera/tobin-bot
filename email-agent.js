@@ -108,7 +108,9 @@ IMPORTANTE:
 - Tono semi-formal: "Hola [nombre]" en español, "Hi [name]" en ingles`;
 
 async function classifyEmails(emails) {
+  const learningCtx = await getLearningContext();
   const userPrompt = `Clasifica estos emails. Responde SOLO con JSON array sin markdown ni texto extra:
+${learningCtx ? learningCtx + "\n\n" : ""}
 [{"gmail_id":"...","classification":"urgente|util|poco_util|spam","action":"responder|etiquetar_util|archivar|marcar_spam","draft_reply":"texto o null","reason":"1 línea explicando por qué"}]
 
 Emails:
@@ -193,8 +195,11 @@ async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
 
 async function executeApproved(gmailIds) {
   const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}`, "Content-Type": "application/json" };
-  const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_inbox?status=eq.pending&limit=200`, { headers: SUPA_H });
-  const emails = (r.data || []).filter(e => gmailIds.includes(e.gmail_id));
+  // Fetch by gmail_id directly, no status filter
+  const ids = gmailIds.map(id => `gmail_id=eq.${id}`).join("&");
+  const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_inbox?or=(${gmailIds.map(id=>`gmail_id.eq.${id}`).join(",")})&limit=200`, { headers: SUPA_H });
+  const emails = r.data || [];
+  console.log(`Ejecutando ${emails.length} emails de ${gmailIds.length} solicitados`);
   const done = [], errors = [];
 
   for (const email of emails) {
@@ -218,6 +223,7 @@ async function executeApproved(gmailIds) {
       }
 
       await updateEmail(email.gmail_id, { status: "approved" });
+      await savePattern(email, true);
       done.push(email.gmail_id);
     } catch(e) {
       console.error("Error ejecutando acción:", e.message);
@@ -265,4 +271,47 @@ function scheduleEmailScans(sendTelegram) {
   console.log(`Scans programados: 09:00 y 15:00 Chile`);
 }
 
-module.exports = { scanEmails, executeApproved, skipEmails, scheduleEmailScans };
+
+
+// ── Learning system ────────────────────────────────────────────
+async function savePattern(email, approved) {
+  const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" };
+  const correction = email.user_correction ? JSON.parse(email.user_correction) : null;
+  const pattern = {
+    gmail_id:            email.gmail_id,
+    from_email:          email.from_email,
+    subject:             email.subject,
+    ai_classification:   email.classification,
+    final_classification: correction ? correction.classification : email.classification,
+    ai_action:           email.action,
+    final_action:        correction ? correction.action : email.action,
+    was_corrected:       !!correction,
+    draft_used:          !!(correction ? correction.draft_reply : email.draft_reply),
+    created_at:          new Date().toISOString()
+  };
+  try {
+    await axios.post(`${process.env.SUPABASE_URL}/rest/v1/email_patterns`, pattern, { headers: SUPA_H });
+  } catch(e) { /* silent */ }
+}
+
+async function getLearningContext() {
+  const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}` };
+  try {
+    const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_patterns?order=created_at.desc&limit=50`, { headers: SUPA_H });
+    const patterns = r.data || [];
+    if (!patterns.length) return "";
+
+    const corrections = patterns.filter(p => p.was_corrected);
+    if (!corrections.length) return "";
+
+    const lines = ["HISTORIAL DE CORRECCIONES DE CRISTOBAL (aprende de estos patrones):"];
+    corrections.slice(0, 20).forEach(p => {
+      if (p.ai_classification !== p.final_classification) {
+        lines.push(`- "${p.subject}" de ${p.from_email}: AI dijo "${p.ai_classification}" pero Cristobal corrigió a "${p.final_classification}"`);
+      }
+    });
+    return lines.length > 1 ? lines.join("\n") : "";
+  } catch(e) { return ""; }
+}
+
+module.exports = { scanEmails, executeApproved, skipEmails, scheduleEmailScans, savePattern, getLearningContext };

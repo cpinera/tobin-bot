@@ -1,5 +1,5 @@
 const express = require("express");
-const { getGmailAuthUrl, saveGmailTokens, getEmailBatch } = require("./gmail");
+const { getGmailAuthUrl, saveGmailTokens, getEmailBatch, getEmailBody } = require("./gmail");
 const { scanEmails, executeApproved, skipEmails, scheduleEmailScans } = require("./email-agent");
 const { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens } = require("./calendar");
 const axios   = require("axios");
@@ -322,9 +322,14 @@ app.post('/emails/scan', auth, async (req, res) => {
 app.post('/emails/execute', auth, async (req, res) => {
   try {
     const { gmailIds } = req.body;
+    console.log("Ejecutando emails:", gmailIds);
     const result = await executeApproved(gmailIds);
+    console.log("Resultado:", result);
     res.json(result);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { 
+    console.error("Error en /emails/execute:", e.message);
+    res.status(500).json({ error: e.message }); 
+  }
 });
 
 app.post('/emails/skip', auth, async (req, res) => {
@@ -332,6 +337,14 @@ app.post('/emails/skip', auth, async (req, res) => {
     const { gmailIds } = req.body;
     await skipEmails(gmailIds);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+app.get('/emails/:gmailId/body', auth, async (req, res) => {
+  try {
+    const body = await getEmailBody(req.params.gmailId);
+    res.json({ body });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
