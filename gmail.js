@@ -172,20 +172,28 @@ function makeRaw(to, subject, body, replyToId) {
 async function saveEmailBatch(emails) {
   for (const e of emails) {
     try {
-      // Try upsert first - update if exists, insert if not
-      await axios.post(`${SUPABASE_URL}/rest/v1/email_inbox`, e, {
-        headers: { 
-          ...SUPA_HEADERS, 
-          "Prefer": "resolution=merge-duplicates,return=representation",
-          "on_conflict": "gmail_id"
+      // Check if already exists
+      const check = await axios.get(
+        `${SUPABASE_URL}/rest/v1/email_inbox?gmail_id=eq.${e.gmail_id}&select=id,status`,
+        { headers: SUPA_HEADERS }
+      );
+      const existing = check.data && check.data[0];
+      
+      if (existing) {
+        // Only update if still pending (don't overwrite approved/skipped)
+        if (existing.status === 'pending') {
+          await axios.patch(
+            `${SUPABASE_URL}/rest/v1/email_inbox?gmail_id=eq.${e.gmail_id}`,
+            { classification: e.classification, action: e.action, draft_reply: e.draft_reply, ai_reason: e.ai_reason },
+            { headers: SUPA_HEADERS }
+          );
         }
-      });
-    } catch(err) {
-      if (err.response && err.response.status === 409) {
-        // Already exists and approved/skipped - skip silently
       } else {
-        console.error("Error guardando email:", err.message);
+        // Insert new
+        await axios.post(`${SUPABASE_URL}/rest/v1/email_inbox`, e, { headers: SUPA_HEADERS });
       }
+    } catch(err) {
+      console.error("Error guardando email:", err.message);
     }
   }
 }
