@@ -163,6 +163,14 @@ async function getEmailBody(emailId) {
   return body.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 3000);
 }
 
+
+async function sendEmail(to, subject, body, threadId) {
+  const gmail = await getGmail();
+  const replySubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
+  const raw = makeRaw(to, replySubject, body, threadId);
+  await gmail.users.messages.send({ userId: "me", resource: { threadId, raw } });
+}
+
 function makeRaw(to, subject, body, replyToId) {
   const msg = [`To: ${to}`, `Subject: Re: ${subject}`, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0", "", body].join("\n");
   return Buffer.from(msg).toString("base64url");
@@ -212,7 +220,7 @@ loadGmailTokens();
 module.exports = {
   getGmailAuthUrl, saveGmailTokens, getGmail,
   fetchNewEmails, archiveEmail, markAsSpam, createDraft, applyLabel,
-  starEmail, labelPrioritario, getEmailBody,
+  starEmail, labelPrioritario, getEmailBody, sendEmail,
   saveEmailBatch, getEmailBatch, updateEmail,
   isConnected: () => !!gmailTokens
 };

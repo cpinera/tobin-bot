@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, createDraft, applyLabel, starEmail, labelPrioritario, isConnected } = require("./gmail");
+const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, createDraft, sendEmail, applyLabel, starEmail, labelPrioritario, isConnected } = require("./gmail");
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 
@@ -208,18 +208,40 @@ async function executeApproved(gmailIds) {
       const action = correction?.action || email.action;
       const draftReply = correction?.draft_reply || email.draft_reply;
 
+      const classification = correction?.classification || email.classification;
+
       if (action === "archivar")       await archiveEmail(email.gmail_id);
       if (action === "marcar_spam")    await markAsSpam(email.gmail_id);
       if (action === "etiquetar_util") await applyLabel(email.gmail_id, "Útil-Tobin");
-      // Urgente: star + label Prioritario
-      const classification = correction?.classification || email.classification;
+
+      // Priorizado: star + label
       if (classification === "urgente") {
         await starEmail(email.gmail_id);
         await labelPrioritario(email.gmail_id);
       }
+
       if (action === "responder" && draftReply) {
         const to = email.from_email.match(/<(.+)>/)?.[1] || email.from_email;
-        await createDraft(email.gmail_id, email.thread_id, to, email.subject, draftReply);
+        const isAutoReply = email.ai_reason && (
+          email.ai_reason.toLowerCase().includes("startup") ||
+          email.ai_reason.toLowerCase().includes("cold call") ||
+          email.ai_reason.toLowerCase().includes("servicio") ||
+          email.ai_reason.toLowerCase().includes("automatico") ||
+          email.ai_reason.toLowerCase().includes("venta") ||
+          draftReply.includes("this is an automated reply") ||
+          draftReply.includes("este es un mail automatico") ||
+          draftReply.includes("www.tantauco.vc") ||
+          draftReply.includes("no estamos interesados")
+        );
+
+        if (isAutoReply && classification !== "urgente") {
+          // Send directly for auto-replies
+          await sendEmail(to, email.subject, draftReply, email.thread_id);
+          await archiveEmail(email.gmail_id); // archive after auto-reply
+        } else {
+          // Create draft for prioritized emails
+          await createDraft(email.gmail_id, email.thread_id, to, email.subject, draftReply);
+        }
       }
 
       await updateEmail(email.gmail_id, { status: "approved" });
