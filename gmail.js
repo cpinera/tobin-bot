@@ -103,6 +103,12 @@ async function markAsSpam(emailId) {
   await gmail.users.messages.modify({ userId: "me", id: emailId, resource: { addLabelIds: ["SPAM"], removeLabelIds: ["INBOX"] } });
 }
 
+// Delete email (move to trash)
+async function deleteEmail(emailId) {
+  const gmail = await getGmail();
+  await gmail.users.messages.trash({ userId: "me", id: emailId });
+}
+
 // Create draft reply
 async function createDraft(emailId, threadId, to, subject, body) {
   const gmail = await getGmail();
@@ -219,7 +225,7 @@ loadGmailTokens();
 
 module.exports = {
   getGmailAuthUrl, saveGmailTokens, getGmail,
-  fetchNewEmails, archiveEmail, markAsSpam, createDraft, applyLabel,
+  fetchNewEmails, archiveEmail, markAsSpam, deleteEmail, createDraft, applyLabel,
   starEmail, labelPrioritario, getEmailBody, sendEmail,
   saveEmailBatch, getEmailBatch, updateEmail,
   isConnected: () => !!gmailTokens

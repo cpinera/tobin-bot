@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, createDraft, sendEmail, applyLabel, starEmail, labelPrioritario, isConnected } = require("./gmail");
+const { fetchNewEmails, saveEmailBatch, getEmailBatch, updateEmail, archiveEmail, markAsSpam, deleteEmail, createDraft, sendEmail, applyLabel, starEmail, labelPrioritario, isConnected } = require("./gmail");
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 
@@ -157,10 +157,14 @@ async function executeApproved(gmailIds) {
       const action = correction?.action || email.action;
       const draftReply = correction?.draft_reply || email.draft_reply;
 
-      if (action === "marcar_spam") {
-        await markAsSpam(email.gmail_id);
+      // Spam: always delete, optionally also mark as spam in Gmail
+      if (classification === "spam") {
+        const markSpam = correction?.markAsSpam === true;
+        if (markSpam) await markAsSpam(email.gmail_id);
+        await deleteEmail(email.gmail_id);
       }
 
+      // Priorizado: star in Gmail
       if (action === "estrella") {
         await starEmail(email.gmail_id);
         await labelPrioritario(email.gmail_id);
