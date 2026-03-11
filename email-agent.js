@@ -6,112 +6,66 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 const SYSTEM_PROMPT = `Eres el asistente de email de Cristóbal, socio de Tantauco Ventures, un fondo de VC en Chile.
 
 EMPRESAS DEL PORTFOLIO DE TANTAUCO VENTURES:
-- Pulpos (pulpos.com)
-- Mutuus (ps-mutuus.com)
-- Buo (getbuo.com)
-- Spakio (spakio.com)
-- Kunzapp (kunzapp.com)
-- Meki (mekiapp.com)
-- Koywe (koywe.eco)
-- Luable (mejorcdt.com)
-- Flipzen (flip-flow.com)
-- SOMOS (somosinternet.co)
-- Legria (legria.cl)
-- Justt (justt.ai)
-- Anyroad (anyroad.com)
-- CxC (cxc.com.mx)
-- Foodology (foodology.com.co)
-- Wibo (soywibo.com)
-- Scape (scape.mx)
-- Hackmetrix (hackmetrix.com)
-- Spot (spotcloud.io)
-- Mission Hires (fixmytravel.com)
-- Influur (influur.com)
-- Grupalia (grupalia.com)
-- Boe (app.boe.cl)
-- Wareclouds (wareclouds.com)
+- Pulpos, Mutuus, Buo, Spakio, Kunzapp, Meki, Koywe, Luable, Flipzen, SOMOS, Legria, Justt, Anyroad, CxC, Foodology, Wibo, Scape, Hackmetrix, Spot, Mission Hires, Influur, Grupalia, Boe, Wareclouds
 
-Si el remitente tiene un dominio de estas empresas, O menciona el nombre de la empresa en el asunto/cuerpo enviando reportes, métricas, actualizaciones o noticias → clasificar como URGENTE.
+SOLO HAY 3 CATEGORÍAS POSIBLES:
 
-REGLAS DE CLASIFICACION:
+1. auto_reply — Emails que requieren respuesta automática:
+   - Pitchs de startups buscando inversión (en cualquier idioma)
+   - Ofertas de servicios, software, consultoría, agencias
+   - Cualquier email comercial o de ventas no solicitado
 
-URGENTE:
-- Emails en español, claramente personalizados y dirigidos a Cristóbal por nombre
-- Reportes o actualizaciones de empresas del portfolio de Tantauco
-- Emails que claramente NO son automatizados y van dirigidos a el personalmente
-- Respuestas a conversaciones previas importantes
+2. spam — Emails a eliminar:
+   - Newsletters y publicidad masiva
+   - Notificaciones automáticas de plataformas (LinkedIn, DocuSign, Notion, calendarios, etc)
+   - Confirmaciones automáticas sin acción requerida
+   - Cualquier email masivo o automatizado que no sea pitch/servicio
 
-UTIL:
-- Emails de VCs, inversores, family offices
-- Invitaciones a eventos del ecosistema VC/startup
-- Noticias relevantes del sector que alguien envio personalmente
-- Emails institucionales importantes (legales, regulatorios)
+3. priorizado — Emails de trabajo que Cristóbal revisará en Gmail:
+   - Emails personalizados dirigidos a Cristóbal por nombre
+   - Reportes o actualizaciones de empresas del portfolio
+   - Emails de VCs, inversores, family offices
+   - Cualquier email que requiera atención personal de Cristóbal
 
-POCO UTIL:
-- Correos bancarios rutinarios
-- Notificaciones de plataformas (DocuSign, Notion, etc)
-- Confirmaciones automaticas
-- FYI sin accion requerida
+REGLAS DE ACCIÓN:
+- auto_reply → accion: "auto_reply", genera borrador en el mismo idioma del email recibido
+- spam → accion: "marcar_spam"
+- priorizado → accion: "estrella"
 
-SPAM:
-- Newsletters masivos
-- Publicidad y promociones
-- Notificaciones de redes sociales (LinkedIn, Twitter, etc)
-- Cualquier email que claramente sea masivo o automatizado
+BORRADORES PARA AUTO_REPLY:
 
-RESPUESTA AUTOMATICA tipo "cold_call_startup":
-Detectar: email presentando una startup buscando inversion, especialmente en ingles.
-Accion: "responder"
-
-Borrador si el email es en español:
+Si es pitch de startup en español:
 "Hola, muchas gracias por compartir la oportunidad. (este es un mail automatico)
-
 Toda inversion que realiza nuestro fondo sin excepcion, debe partir por rellenar el formulario en nuestro sitio www.tantauco.vc, desde ese punto te contactaremos en 7-14 dias.
-
 Saludos!
 Cristobal"
 
-Borrador si el email es en ingles:
+Si es pitch de startup en inglés:
 "Hi, thank you for sharing this opportunity. (this is an automated reply)
-
 Every investment our fund considers, without exception, must start by filling out the form on our website www.tantauco.vc. From there, we will be in touch within 7-14 business days.
-
 Best,
 Cristobal"
 
-RESPUESTA AUTOMATICA tipo "venta_servicios":
-Detectar: email vendiendo servicios, software, consultoria, agencias, etc.
-Accion: "responder"
-
-Borrador si el email es en español:
+Si es oferta de servicios en español:
 "Hola, muchas gracias pero no estamos interesados por ahora.
 Saludos,
 Cristobal"
 
-Borrador si el email es en ingles:
+Si es oferta de servicios en inglés:
 "Hi, thank you for reaching out but we are not interested at this time.
 Best,
 Cristobal"
 
-REGLAS DE ACCION:
-- urgente → accion: "responder" (genera borrador contextual personalizado) + se marcará con estrella y etiqueta Prioritario en Gmail
-- util → accion: "etiquetar_util"
-- poco_util → accion: "archivar"
-- spam → accion: "marcar_spam"
-- cold_call_startup → clasificacion: "poco_util", accion: "responder" con template formulario
-- venta_servicios → clasificacion: "poco_util", accion: "responder" con template no interesado
-
 IMPORTANTE:
-- Si el email NO menciona explicitamente a Cristobal por nombre y parece masivo, NO es urgente
-- Prioriza identificar si el email es automatizado/masivo vs personal
-- Para borradores usa el mismo idioma del email recibido
-- Tono semi-formal: "Hola [nombre]" en español, "Hi [name]" en ingles`;
+- Si hay duda entre SPAM y AUTO_REPLY, elige AUTO_REPLY
+- Si hay duda entre SPAM y PRIORIZADO, elige PRIORIZADO
+- Solo usa SPAM cuando estés seguro de que es masivo/automatizado`;
 
 async function classifyEmails(emails) {
   const learningCtx = await getLearningContext();
   const userPrompt = `Clasifica estos emails. Responde SOLO con JSON array sin markdown ni texto extra:
 ${learningCtx ? learningCtx + "\n\n" : ""}
-[{"gmail_id":"...","classification":"urgente|util|poco_util|spam","action":"responder|etiquetar_util|archivar|marcar_spam","draft_reply":"texto o null","reason":"1 línea explicando por qué"}]
+[{"gmail_id":"...","classification":"auto_reply|spam|priorizado","action":"auto_reply|marcar_spam|estrella","draft_reply":"texto o null","reason":"1 línea explicando por qué"}]
 
 Emails:
 ${JSON.stringify(emails.map(e => ({ id: e.id, from: e.from, subject: e.subject, snippet: e.snippet })), null, 2)}`;
@@ -156,8 +110,8 @@ async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
         subject:        email.subject,
         date:           email.date,
         snippet:        email.snippet,
-        classification: cls.classification || "poco_util",
-        action:         cls.action || "archivar",
+        classification: cls.classification || "spam",
+        action:         cls.action || "marcar_spam",
         draft_reply:    cls.draft_reply || null,
         ai_reason:      cls.reason || "",
         status:         "pending"
@@ -165,20 +119,16 @@ async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
     });
 
     await saveEmailBatch(toSave);
-    const urgentes  = toSave.filter(e => e.classification === "urgente").length;
-    const utiles    = toSave.filter(e => e.classification === "util").length;
-    const poco_util = toSave.filter(e => e.classification === "poco_util").length;
-    const spam      = toSave.filter(e => e.classification === "spam").length;
-    console.log(`Scan completo: ${toSave.length} emails (${urgentes} priorizado, ${utiles} útiles, ${poco_util} poco útil, ${spam} spam)`);
-    const result = { count: toSave.length, urgentes, utiles, poco_util, spam };
+    const autoReply  = toSave.filter(e => e.classification === "auto_reply").length;
+    const priorizado = toSave.filter(e => e.classification === "priorizado").length;
+    const spam       = toSave.filter(e => e.classification === "spam").length;
+    console.log(`Scan completo: ${toSave.length} emails (${autoReply} auto_reply, ${priorizado} priorizado, ${spam} spam)`);
 
-    // Send Telegram summary if callback provided
     if (toSave.length > 0 && sendTelegramCb) {
       const lines = ["📧 *Revisión de emails*", ""];
-      if (urgentes > 0)   lines.push(`🔴 *Priorizado:* ${urgentes}`);
-      if (utiles > 0)     lines.push(`🔵 *Útil:* ${utiles}`);
-      if (poco_util > 0)  lines.push(`⚪ *Poco útil:* ${poco_util}`);
-      if (spam > 0)       lines.push(`⛔ *Spam:* ${spam}`);
+      if (priorizado > 0)  lines.push(`🔴 *Priorizado:* ${priorizado}`);
+      if (autoReply > 0)   lines.push(`✍️ *Respuesta automática:* ${autoReply}`);
+      if (spam > 0)        lines.push(`⛔ *Spam:* ${spam}`);
       lines.push("");
       lines.push(`📬 *Total:* ${toSave.length} emails`);
       lines.push("");
@@ -186,7 +136,7 @@ async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
       await sendTelegramCb(lines.join("\n"));
     }
 
-    return result;
+    return { count: toSave.length, autoReply, priorizado, spam };
   } catch(e) {
     console.error("Error en scan:", e.message);
     return { count: 0, error: e.message };
@@ -195,8 +145,6 @@ async function scanEmails(sinceHours = 13, sendTelegramCb = null) {
 
 async function executeApproved(gmailIds) {
   const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}`, "Content-Type": "application/json" };
-  // Fetch by gmail_id directly, no status filter
-  const ids = gmailIds.map(id => `gmail_id=eq.${id}`).join("&");
   const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_inbox?or=(${gmailIds.map(id=>`gmail_id.eq.${id}`).join(",")})&limit=200`, { headers: SUPA_H });
   const emails = r.data || [];
   console.log(`Ejecutando ${emails.length} emails de ${gmailIds.length} solicitados`);
@@ -205,47 +153,27 @@ async function executeApproved(gmailIds) {
   for (const email of emails) {
     try {
       const correction = email.user_correction ? JSON.parse(email.user_correction) : null;
+      const classification = correction?.classification || email.classification;
       const action = correction?.action || email.action;
       const draftReply = correction?.draft_reply || email.draft_reply;
 
-      const classification = correction?.classification || email.classification;
+      if (action === "marcar_spam") {
+        await markAsSpam(email.gmail_id);
+      }
 
-      if (action === "archivar")       await archiveEmail(email.gmail_id);
-      if (action === "marcar_spam")    await markAsSpam(email.gmail_id);
-      if (action === "etiquetar_util") await applyLabel(email.gmail_id, "Útil-Tobin");
-
-      // Priorizado: star + label
-      if (classification === "urgente") {
+      if (action === "estrella") {
         await starEmail(email.gmail_id);
         await labelPrioritario(email.gmail_id);
       }
 
-      if (action === "responder" && draftReply) {
+      if (action === "auto_reply" && draftReply) {
         const to = email.from_email.match(/<(.+)>/)?.[1] || email.from_email;
-        const isAutoReply = email.ai_reason && (
-          email.ai_reason.toLowerCase().includes("startup") ||
-          email.ai_reason.toLowerCase().includes("cold call") ||
-          email.ai_reason.toLowerCase().includes("servicio") ||
-          email.ai_reason.toLowerCase().includes("automatico") ||
-          email.ai_reason.toLowerCase().includes("venta") ||
-          draftReply.includes("this is an automated reply") ||
-          draftReply.includes("este es un mail automatico") ||
-          draftReply.includes("www.tantauco.vc") ||
-          draftReply.includes("no estamos interesados")
-        );
-
-        if (isAutoReply && classification !== "urgente") {
-          // Send directly for auto-replies
-          await sendEmail(to, email.subject, draftReply, email.thread_id);
-          await archiveEmail(email.gmail_id); // archive after auto-reply
-        } else {
-          // Create draft for prioritized emails
-          await createDraft(email.gmail_id, email.thread_id, to, email.subject, draftReply);
-        }
+        await sendEmail(to, email.subject, draftReply, email.thread_id);
+        await archiveEmail(email.gmail_id);
       }
 
       await updateEmail(email.gmail_id, { status: "approved" });
-      await savePattern(email, true);
+      await savePattern(email, correction);
       done.push(email.gmail_id);
     } catch(e) {
       console.error("Error ejecutando acción:", e.message);
@@ -255,12 +183,36 @@ async function executeApproved(gmailIds) {
   return { done: done.length, errors: errors.length };
 }
 
+async function moveEmail(gmailId, newClassification) {
+  const actionMap = {
+    auto_reply:  "auto_reply",
+    spam:        "marcar_spam",
+    priorizado:  "estrella"
+  };
+  const correction = {
+    classification: newClassification,
+    action: actionMap[newClassification] || "marcar_spam"
+  };
+
+  // Load existing draft if moving to auto_reply
+  const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}` };
+  const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_inbox?gmail_id=eq.${gmailId}`, { headers: SUPA_H });
+  const email = r.data?.[0];
+  if (email) {
+    const existingCorr = email.user_correction ? JSON.parse(email.user_correction) : null;
+    correction.draft_reply = existingCorr?.draft_reply || email.draft_reply || null;
+    await savePattern(email, correction); // save as learning signal
+  }
+
+  await updateEmail(gmailId, { user_correction: JSON.stringify(correction) });
+  return correction;
+}
+
 async function skipEmails(gmailIds) {
   for (const id of gmailIds) await updateEmail(id, { status: "skipped" });
 }
 
 function scheduleEmailScans(sendTelegram) {
-  // Scan at 9:00 AM and 3:00 PM Chile time (12:00 UTC and 18:00 UTC)
   function msUntilNext(utcHour) {
     const now = new Date();
     const next = new Date();
@@ -271,45 +223,29 @@ function scheduleEmailScans(sendTelegram) {
 
   async function runScan(label) {
     console.log(`Scan de emails ${label}...`);
-    const result = await scanEmails(13, sendTelegram);
-    if (result.count > 0 && sendTelegram) {
-      const msg = `📧 *Revisión de emails ${label}*\n${result.count} emails nuevos · ${result.urgentes || 0} urgentes · ${result.utiles || 0} útiles\n\nRevisa en: https://tobin-todo-web.vercel.app`;
-      await sendTelegram(msg);
-    }
+    await scanEmails(13, sendTelegram);
   }
 
-  // Morning scan 9:00 AM Chile (12:00 UTC)
-  setTimeout(() => {
-    runScan("mañana");
-    setInterval(() => runScan("mañana"), 24 * 60 * 60 * 1000);
-  }, msUntilNext(12));
-
-  // Afternoon scan 3:00 PM Chile (18:00 UTC)
-  setTimeout(() => {
-    runScan("tarde");
-    setInterval(() => runScan("tarde"), 24 * 60 * 60 * 1000);
-  }, msUntilNext(18));
-
+  setTimeout(() => { runScan("mañana"); setInterval(() => runScan("mañana"), 24 * 60 * 60 * 1000); }, msUntilNext(12));
+  setTimeout(() => { runScan("tarde");  setInterval(() => runScan("tarde"),  24 * 60 * 60 * 1000); }, msUntilNext(18));
   console.log(`Scans programados: 09:00 y 15:00 Chile`);
 }
 
-
-
 // ── Learning system ────────────────────────────────────────────
-async function savePattern(email, approved) {
+async function savePattern(email, correction) {
   const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" };
-  const correction = email.user_correction ? JSON.parse(email.user_correction) : null;
+  const finalCls = correction?.classification || email.classification;
   const pattern = {
-    gmail_id:            email.gmail_id,
-    from_email:          email.from_email,
-    subject:             email.subject,
-    ai_classification:   email.classification,
-    final_classification: correction ? correction.classification : email.classification,
-    ai_action:           email.action,
-    final_action:        correction ? correction.action : email.action,
-    was_corrected:       !!correction,
-    draft_used:          !!(correction ? correction.draft_reply : email.draft_reply),
-    created_at:          new Date().toISOString()
+    gmail_id:             email.gmail_id,
+    from_email:           email.from_email,
+    subject:              email.subject,
+    ai_classification:    email.classification,
+    final_classification: finalCls,
+    ai_action:            email.action,
+    final_action:         correction?.action || email.action,
+    was_corrected:        !!(correction && correction.classification !== email.classification),
+    draft_used:           !!(correction?.draft_reply || email.draft_reply),
+    created_at:           new Date().toISOString()
   };
   try {
     await axios.post(`${process.env.SUPABASE_URL}/rest/v1/email_patterns`, pattern, { headers: SUPA_H });
@@ -321,19 +257,15 @@ async function getLearningContext() {
   try {
     const r = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/email_patterns?order=created_at.desc&limit=50`, { headers: SUPA_H });
     const patterns = r.data || [];
-    if (!patterns.length) return "";
-
     const corrections = patterns.filter(p => p.was_corrected);
     if (!corrections.length) return "";
 
-    const lines = ["HISTORIAL DE CORRECCIONES DE CRISTOBAL (aprende de estos patrones):"];
+    const lines = ["CORRECCIONES PREVIAS DE CRISTÓBAL (aprende de estos patrones):"];
     corrections.slice(0, 20).forEach(p => {
-      if (p.ai_classification !== p.final_classification) {
-        lines.push(`- "${p.subject}" de ${p.from_email}: AI dijo "${p.ai_classification}" pero Cristobal corrigió a "${p.final_classification}"`);
-      }
+      lines.push(`- "${p.subject}" de ${p.from_email}: AI clasificó como "${p.ai_classification}" pero Cristóbal lo movió a "${p.final_classification}"`);
     });
-    return lines.length > 1 ? lines.join("\n") : "";
+    return lines.join("\n");
   } catch(e) { return ""; }
 }
 
-module.exports = { scanEmails, executeApproved, skipEmails, scheduleEmailScans, savePattern, getLearningContext };
+module.exports = { scanEmails, executeApproved, moveEmail, skipEmails, scheduleEmailScans };

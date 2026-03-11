@@ -1,6 +1,6 @@
 const express = require("express");
 const { getGmailAuthUrl, saveGmailTokens, getEmailBatch, getEmailBody } = require("./gmail");
-const { scanEmails, executeApproved, skipEmails, scheduleEmailScans } = require("./email-agent");
+const { scanEmails, executeApproved, moveEmail, skipEmails, scheduleEmailScans } = require("./email-agent");
 const { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens } = require("./calendar");
 const axios   = require("axios");
 
@@ -341,6 +341,14 @@ app.post('/emails/skip', auth, async (req, res) => {
 });
 
 
+app.post('/emails/move', auth, async (req, res) => {
+  try {
+    const { gmailId, classification } = req.body;
+    const correction = await moveEmail(gmailId, classification);
+    res.json({ ok: true, correction });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/emails/:gmailId/body', auth, async (req, res) => {
   try {
     const body = await getEmailBody(req.params.gmailId);
@@ -379,69 +387,12 @@ app.get('/oauth/callback', async (req, res) => {
   }
 });
 
-// ── Voice transcription ───────────────────────────────────────
-async function transcribeVoice(fileId) {
-  // 1. Get file path from Telegram
-  const fileRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
-  const filePath = fileRes.data.result.file_path;
-
-  // 2. Download the OGG audio as buffer
-  const audioRes = await axios.get(
-    `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`,
-    { responseType: "arraybuffer" }
-  );
-  const audioBuffer = Buffer.from(audioRes.data);
-
-  // 3. Send to OpenAI Whisper for transcription
-  const FormData = require("form-data");
-  const form = new FormData();
-  form.append("file", audioBuffer, { filename: "voice.ogg", contentType: "audio/ogg" });
-  form.append("model", "whisper-1");
-  form.append("language", "es");
-
-  const whisperRes = await axios.post(
-    "https://api.openai.com/v1/audio/transcriptions",
-    form,
-    {
-      headers: {
-        ...form.getHeaders(),
-        "Authorization": `Bearer ${process.env.OPENAI_KEY}`
-      }
-    }
-  );
-  return whisperRes.data.text;
-}
-
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const update = req.body;
-  const msg = update.message;
-  if (!msg) return;
-
-  const chatId = msg.chat.id;
-
-  // Handle voice messages
-  if (msg.voice) {
-    try {
-      await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: "typing" });
-      const transcript = await transcribeVoice(msg.voice.file_id);
-      console.log(`🎤 Voz transcrita: "${transcript}"`);
-
-      // Echo transcription so user sees what was understood
-      await sendMessage(chatId, `🎤 _"${transcript}"_`);
-
-      const reply = await runAgent(chatId, transcript);
-      await sendMessage(chatId, reply);
-    } catch(e) {
-      console.error("Voice error:", e.response?.data || e.message);
-      await sendMessage(chatId, "❌ No pude entender el audio. Intenta de nuevo.");
-    }
-    return;
-  }
-
-  // Handle text messages
-  if (!msg.text) return;
-  const text = msg.text;
+  if (!update.message?.text) return;
+  const chatId = update.message.chat.id;
+  const text   = update.message.text;
   try {
     await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id:chatId, action:"typing" });
     const reply = await runAgent(chatId, text);
