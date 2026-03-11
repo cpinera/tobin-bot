@@ -1,6 +1,6 @@
 const express = require("express");
 const { getGmailAuthUrl, saveGmailTokens, getEmailBatch, getEmailBody } = require("./gmail");
-const { scanEmails, executeApproved, skipEmails, scheduleEmailScans } = require("./email-agent");
+const { scanEmails, executeApproved, moveEmail, skipEmails, scheduleEmailScans } = require("./email-agent");
 const { CALENDAR_TOOLS, executeCalendarTool, getOAuth2Client, setTokens } = require("./calendar");
 const axios   = require("axios");
 
@@ -340,6 +340,14 @@ app.post('/emails/skip', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+app.post('/emails/move', auth, async (req, res) => {
+  try {
+    const { gmailId, classification } = req.body;
+    const correction = await moveEmail(gmailId, classification);
+    res.json({ ok: true, correction });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 app.post('/emails/scan-now', auth, async (req, res) => {
   try {
