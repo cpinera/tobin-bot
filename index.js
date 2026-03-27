@@ -402,15 +402,15 @@ async function downloadTelegramFile(fileId) {
 }
 
 function buildExpenseReply(result) {
-  let msg = `✅ *Gasto registrado en Airtable*\n\n`;
-  msg += `📌 *Item:* ${result.item}\n`;
-  msg += `📅 *Fecha del gasto:* ${result.fechaGasto}\n`;
-  msg += `🗓 *Mes:* ${result.mes} ${result.anio}\n`;
-  msg += `💰 *Total:* $${result.totalCLP.toLocaleString('es-CL')} CLP`;
+  let msg = `✅ Gasto registrado en Airtable\n\n`;
+  msg += `📌 Item: ${result.item}\n`;
+  msg += `📅 Fecha: ${result.fechaGasto}\n`;
+  msg += `🗓 Mes: ${result.mes} ${result.anio}\n`;
+  msg += `💰 Total: $${result.totalCLP.toLocaleString('es-CL')} CLP`;
   if (result.monedaOriginal === 'USD') {
-    msg += `\n   _($${result.totalOriginal} USD × $${Math.round(result.usdRate).toLocaleString('es-CL')} = CLP)_`;
+    msg += `\n   (USD ${result.totalOriginal} x $${Math.round(result.usdRate).toLocaleString('es-CL')} = CLP)`;
   }
-  msg += `\n📎 *Respaldo:* imagen subida`;
+  msg += `\n📎 Respaldo: imagen subida`;
   return msg;
 }
 

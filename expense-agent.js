@@ -13,27 +13,21 @@ async function processExpense(fileBuffer, mimeType, fileName, telegramDate) {
     ? { type: 'image', source: { type: 'base64', media_type: mimeType, data: fileBuffer.toString('base64') } }
     : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileBuffer.toString('base64') } };
 
-  const prompt = `Analiza este comprobante de gasto y extrae la información relevante.
+  const prompt = `Analiza este comprobante de gasto y extrae la informacion relevante.
 
 Contexto:
 - Fecha en que me enviaron el archivo: ${sentDate.toISOString().split('T')[0]}
-- Tipo de cambio USD→CLP hoy (Banco Central Chile): ${usdRate}
+- Tipo de cambio USD a CLP hoy (Banco Central Chile): ${usdRate}
 
 Instrucciones:
-- "item": nombre descriptivo del gasto (interpreta si es ambiguo, ej: "Almuerzo equipo", "MacBook Pro 14", "Artículos oficina Jumbo")
-- "fechaGasto": fecha en que se realizó el gasto según el documento (formato YYYY-MM-DD). Si no aparece en el documento, usa la fecha de envío.
-- "totalCLP": monto total en pesos chilenos como número entero. Si el documento está en USD, convierte usando ${usdRate}.
+- "item": nombre descriptivo del gasto (interpreta si es ambiguo, ej: "Almuerzo equipo", "MacBook Pro 14", "Articulos oficina Jumbo")
+- "fechaGasto": fecha en que se realizo el gasto segun el documento (formato YYYY-MM-DD). Si no aparece en el documento, usa la fecha de envio.
+- "totalCLP": monto total en pesos chilenos como numero entero. Si el documento esta en USD, convierte usando ${usdRate}.
 - "monedaOriginal": "CLP" o "USD"
-- "totalOriginal": monto original antes de conversión (igual a totalCLP si ya era CLP)
+- "totalOriginal": monto original antes de conversion (igual a totalCLP si ya era CLP)
 
-Responde ÚNICAMENTE con JSON válido, sin texto adicional ni markdown:
-{
-  "item": "...",
-  "fechaGasto": "YYYY-MM-DD",
-  "totalCLP": 0,
-  "monedaOriginal": "CLP",
-  "totalOriginal": 0
-}`;
+IMPORTANTE: Responde UNICAMENTE con JSON valido. Sin markdown, sin comillas triples, sin texto adicional. Solo el objeto JSON:
+{"item":"...","fechaGasto":"YYYY-MM-DD","totalCLP":0,"monedaOriginal":"CLP","totalOriginal":0}`;
 
   const response = await client.messages.create({
     model: 'claude-opus-4-5',
@@ -44,7 +38,11 @@ Responde ÚNICAMENTE con JSON válido, sin texto adicional ni markdown:
     }]
   });
 
-  const extracted = JSON.parse(response.content[0].text.trim());
+  // Limpiar posibles markdown fences que Claude pueda agregar
+  let rawText = response.content[0].text.trim();
+  rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  const extracted = JSON.parse(rawText);
 
   const gastoDate = new Date(extracted.fechaGasto + 'T12:00:00');
   const mes = MESES[gastoDate.getMonth() + 1];
