@@ -1,10 +1,9 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { createExpenseRecord, getUSDtoCLP, MESES } = require('./airtable-expense');
+const { createExpenseRecord, convertToCLP, MESES } = require('./airtable-expense');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
 
 async function processExpense(fileBuffer, mimeType, fileName, telegramDate) {
-  const usdRate = await getUSDtoCLP();
   const sentDate = new Date(telegramDate * 1000);
 
   const isImage = mimeType.startsWith('image/');
@@ -15,19 +14,16 @@ async function processExpense(fileBuffer, mimeType, fileName, telegramDate) {
 
   const prompt = `Analiza este comprobante de gasto y extrae la informacion relevante.
 
-Contexto:
-- Fecha en que me enviaron el archivo: ${sentDate.toISOString().split('T')[0]}
-- Tipo de cambio USD a CLP hoy (Banco Central Chile): ${usdRate}
+Fecha en que me enviaron el archivo: ${sentDate.toISOString().split('T')[0]}
 
 Instrucciones:
-- "item": nombre descriptivo del gasto (interpreta si es ambiguo, ej: "Almuerzo equipo", "MacBook Pro 14", "Articulos oficina Jumbo")
-- "fechaGasto": fecha en que se realizo el gasto segun el documento (formato YYYY-MM-DD). Si no aparece en el documento, usa la fecha de envio.
-- "totalCLP": monto total en pesos chilenos como numero entero. Si el documento esta en USD, convierte usando ${usdRate}.
-- "monedaOriginal": "CLP" o "USD"
-- "totalOriginal": monto original antes de conversion (igual a totalCLP si ya era CLP)
+- "item": nombre descriptivo del gasto (ej: "Almuerzo equipo", "MacBook Pro 14", "Articulos oficina Jumbo")
+- "fechaGasto": fecha en que se realizo el gasto segun el documento (YYYY-MM-DD). Si no aparece, usa la fecha de envio.
+- "totalOriginal": monto total como numero (sin simbolos de moneda, sin puntos ni comas de miles)
+- "moneda": codigo ISO de la moneda (CLP, USD, BRL, EUR, ARS, etc). Detecta la moneda del documento.
 
-IMPORTANTE: Responde UNICAMENTE con JSON valido. Sin markdown, sin comillas triples, sin texto adicional. Solo el objeto JSON:
-{"item":"...","fechaGasto":"YYYY-MM-DD","totalCLP":0,"monedaOriginal":"CLP","totalOriginal":0}`;
+IMPORTANTE: Responde UNICAMENTE con JSON valido, sin markdown, sin texto adicional:
+{"item":"...","fechaGasto":"YYYY-MM-DD","totalOriginal":0,"moneda":"CLP"}`;
 
   const response = await client.messages.create({
     model: 'claude-opus-4-5',
@@ -38,11 +34,21 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido. Sin markdown, sin comillas trip
     }]
   });
 
-  // Limpiar posibles markdown fences que Claude pueda agregar
+  // Limpiar posibles markdown fences
   let rawText = response.content[0].text.trim();
   rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
 
   const extracted = JSON.parse(rawText);
+
+  // Convertir a CLP si es necesario
+  let totalCLP = extracted.totalOriginal;
+  let conversionRate = null;
+
+  if (extracted.moneda !== 'CLP') {
+    const conv = await convertToCLP(extracted.totalOriginal, extracted.moneda);
+    totalCLP = conv.clp;
+    conversionRate = conv.rate;
+  }
 
   const gastoDate = new Date(extracted.fechaGasto + 'T12:00:00');
   const mes = MESES[gastoDate.getMonth() + 1];
@@ -53,7 +59,7 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido. Sin markdown, sin comillas trip
     mes,
     fechaGasto: extracted.fechaGasto,
     anio,
-    totalCLP: Math.round(extracted.totalCLP),
+    totalCLP: Math.round(totalCLP),
     fileBuffer,
     fileName,
     mimeType,
@@ -65,10 +71,10 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido. Sin markdown, sin comillas trip
     mes,
     fechaGasto: extracted.fechaGasto,
     anio,
-    totalCLP: Math.round(extracted.totalCLP),
-    monedaOriginal: extracted.monedaOriginal,
+    totalCLP: Math.round(totalCLP),
+    moneda: extracted.moneda,
     totalOriginal: extracted.totalOriginal,
-    usdRate: extracted.monedaOriginal === 'USD' ? usdRate : null,
+    conversionRate,
   };
 }
 

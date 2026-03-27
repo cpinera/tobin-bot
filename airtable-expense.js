@@ -13,15 +13,34 @@ const MESES = {
   9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
 };
 
-async function getUSDtoCLP() {
+// Convierte cualquier moneda a CLP usando exchangerate-api
+async function convertToCLP(amount, fromCurrency) {
+  if (fromCurrency === 'CLP') return amount;
   try {
-    const res = await fetch('https://mindicador.cl/api/dolar');
-    const data = await res.json();
-    return data.serie[0].valor;
+    // Primero intenta mindicador.cl para USD (más preciso para Chile)
+    if (fromCurrency === 'USD') {
+      const res = await fetch('https://mindicador.cl/api/dolar');
+      const data = await res.json();
+      const rate = data.serie[0].valor;
+      return { clp: Math.round(amount * rate), rate };
+    }
+    // Para otras monedas usa exchangerate-api: convierte moneda → USD → CLP
+    const [rateRes, usdRes] = await Promise.all([
+      fetch(`https://api.exchangerate-api.com/v4/latest/${fromCurrency}`),
+      fetch('https://mindicador.cl/api/dolar')
+    ]);
+    const rateData = await rateRes.json();
+    const usdData = await usdRes.json();
+    const toUSD = rateData.rates.USD;
+    const usdToCLP = usdData.serie[0].valor;
+    const rate = toUSD * usdToCLP;
+    return { clp: Math.round(amount * rate), rate };
   } catch {
-    const res = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+    // Fallback: exchangerate-api directo a CLP
+    const res = await fetch(`https://api.exchangerate-api.com/v4/latest/${fromCurrency}`);
     const data = await res.json();
-    return data.rates.CLP;
+    const rate = data.rates.CLP;
+    return { clp: Math.round(amount * rate), rate };
   }
 }
 
@@ -45,9 +64,9 @@ async function createExpenseRecord({ item, mes, fechaGasto, anio, totalCLP, file
   const fields = {
     'Item': item,
     'MES': mes,
-    'Fecha del Gasto': fechaGasto,
-    'Año': anio,
-    'TOTAL': totalCLP,
+    'Fecha del Gasto': fechaGasto,   // string "YYYY-MM-DD"
+    'Año': String(anio),             // ← string, no número
+    'TOTAL': totalCLP,               // número
   };
 
   if (fileBuffer) {
@@ -59,4 +78,4 @@ async function createExpenseRecord({ item, mes, fechaGasto, anio, totalCLP, file
   return record.getId();
 }
 
-module.exports = { createExpenseRecord, getUSDtoCLP, MESES };
+module.exports = { createExpenseRecord, convertToCLP, MESES };

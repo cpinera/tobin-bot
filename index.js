@@ -407,8 +407,9 @@ function buildExpenseReply(result) {
   msg += `📅 Fecha: ${result.fechaGasto}\n`;
   msg += `🗓 Mes: ${result.mes} ${result.anio}\n`;
   msg += `💰 Total: $${result.totalCLP.toLocaleString('es-CL')} CLP`;
-  if (result.monedaOriginal === 'USD') {
-    msg += `\n   (USD ${result.totalOriginal} x $${Math.round(result.usdRate).toLocaleString('es-CL')} = CLP)`;
+  if (result.moneda && result.moneda !== 'CLP') {
+    const rate = result.conversionRate ? Math.round(result.conversionRate).toLocaleString('es-CL') : '?';
+    msg += `\n   (${result.moneda} ${result.totalOriginal.toLocaleString('es-CL')} x $${rate} = CLP)`;
   }
   msg += `\n📎 Respaldo: imagen subida`;
   return msg;
