@@ -3,6 +3,24 @@ const { createExpenseRecord, convertToCLP, MESES } = require('./airtable-expense
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
 
+function fixYear(fechaGasto, sentDate) {
+  const gasto = new Date(fechaGasto + 'T12:00:00');
+  const sent  = new Date(sentDate);
+
+  // Si la fecha del gasto es más de 60 días antes del envío, probablemente el año está mal
+  const diffDays = (sent - gasto) / (1000 * 60 * 60 * 24);
+  if (diffDays > 60) {
+    // Reemplazar el año por el del envío
+    const yearCorregido = sent.getFullYear();
+    const fixed = new Date(gasto);
+    fixed.setFullYear(yearCorregido);
+    // Si aún así queda en el futuro (ej: envío en enero, gasto en diciembre), restar 1 año
+    if (fixed > sent) fixed.setFullYear(yearCorregido - 1);
+    return fixed.toISOString().split('T')[0];
+  }
+  return fechaGasto;
+}
+
 async function processExpense(fileBuffer, mimeType, fileName, telegramDate) {
   const sentDate = new Date(telegramDate * 1000);
 
@@ -18,7 +36,7 @@ Fecha en que me enviaron el archivo: ${sentDate.toISOString().split('T')[0]}
 
 Instrucciones:
 - "item": nombre descriptivo del gasto (ej: "Almuerzo equipo", "MacBook Pro 14", "Articulos oficina Jumbo")
-- "fechaGasto": fecha en que se realizo el gasto segun el documento (YYYY-MM-DD). Si no aparece, usa la fecha de envio.
+- "fechaGasto": fecha en que se realizo el gasto segun el documento (YYYY-MM-DD). Si no aparece, usa la fecha de envio. El año debe ser ${sentDate.getFullYear()} salvo que el documento indique claramente otro año.
 - "totalOriginal": monto total como numero (sin simbolos de moneda, sin puntos ni comas de miles)
 - "moneda": codigo ISO de la moneda (CLP, USD, BRL, EUR, ARS, etc). Detecta la moneda del documento.
 
@@ -40,6 +58,9 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido, sin markdown, sin texto adicion
 
   const extracted = JSON.parse(rawText);
 
+  // Corregir año si el documento trae un año incorrecto
+  const fechaCorregida = fixYear(extracted.fechaGasto, sentDate);
+
   // Convertir a CLP si es necesario
   let totalCLP = extracted.totalOriginal;
   let conversionRate = null;
@@ -50,14 +71,14 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido, sin markdown, sin texto adicion
     conversionRate = conv.rate;
   }
 
-  const gastoDate = new Date(extracted.fechaGasto + 'T12:00:00');
+  const gastoDate = new Date(fechaCorregida + 'T12:00:00');
   const mes = MESES[gastoDate.getMonth() + 1];
   const anio = gastoDate.getFullYear();
 
   const recordId = await createExpenseRecord({
     item: extracted.item,
     mes,
-    fechaGasto: extracted.fechaGasto,
+    fechaGasto: fechaCorregida,
     anio,
     totalCLP: Math.round(totalCLP),
     fileBuffer,
@@ -69,7 +90,7 @@ IMPORTANTE: Responde UNICAMENTE con JSON valido, sin markdown, sin texto adicion
     recordId,
     item: extracted.item,
     mes,
-    fechaGasto: extracted.fechaGasto,
+    fechaGasto: fechaCorregida,
     anio,
     totalCLP: Math.round(totalCLP),
     moneda: extracted.moneda,
