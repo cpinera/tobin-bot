@@ -283,9 +283,6 @@ Confirma las acciones brevemente.`;
   return "No pude completar la acción, intenta de nuevo.";
 }
 
-
-// Google Calendar OAuth
-
 // ── Gmail OAuth ───────────────────────────────────────────────
 app.get('/gmail/start', (req, res) => res.redirect(getGmailAuthUrl()));
 
@@ -326,9 +323,9 @@ app.post('/emails/execute', auth, async (req, res) => {
     const result = await executeApproved(gmailIds);
     console.log("Resultado:", result);
     res.json(result);
-  } catch(e) { 
+  } catch(e) {
     console.error("Error en /emails/execute:", e.message);
-    res.status(500).json({ error: e.message }); 
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -339,7 +336,6 @@ app.post('/emails/skip', auth, async (req, res) => {
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-
 
 app.post('/emails/move', auth, async (req, res) => {
   try {
@@ -394,19 +390,85 @@ app.get('/oauth/callback', async (req, res) => {
   }
 });
 
+// ── Expense helpers ───────────────────────────────────────────
+const { processExpense } = require('./expense-agent');
+
+async function downloadTelegramFile(fileId) {
+  const infoRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
+  const filePath = infoRes.data.result.file_path;
+  const url = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
+  const fileRes = await axios.get(url, { responseType: 'arraybuffer' });
+  return Buffer.from(fileRes.data);
+}
+
+function buildExpenseReply(result) {
+  let msg = `✅ *Gasto registrado en Airtable*\n\n`;
+  msg += `📌 *Item:* ${result.item}\n`;
+  msg += `📅 *Fecha del gasto:* ${result.fechaGasto}\n`;
+  msg += `🗓 *Mes:* ${result.mes} ${result.anio}\n`;
+  msg += `💰 *Total:* $${result.totalCLP.toLocaleString('es-CL')} CLP`;
+  if (result.monedaOriginal === 'USD') {
+    msg += `\n   _($${result.totalOriginal} USD × $${Math.round(result.usdRate).toLocaleString('es-CL')} = CLP)_`;
+  }
+  msg += `\n📎 *Respaldo:* imagen subida`;
+  return msg;
+}
+
+// ── Webhook ───────────────────────────────────────────────────
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const update = req.body;
-  if (!update.message?.text) return;
-  const chatId = update.message.chat.id;
-  const text   = update.message.text;
-  try {
-    await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id:chatId, action:"typing" });
-    const reply = await runAgent(chatId, text);
-    await sendMessage(chatId, reply);
-  } catch(e) {
-    console.error("Agent error:", e.response?.data || e.message);
-    await sendMessage(chatId, "❌ Ocurrió un error. Intenta de nuevo.");
+  const msg = update.message;
+  if (!msg) return;
+
+  const chatId = msg.chat.id;
+
+  // Foto enviada directamente
+  if (msg.photo) {
+    await sendMessage(chatId, '⏳ Procesando boleta...');
+    try {
+      const photo = msg.photo.at(-1);
+      const buffer = await downloadTelegramFile(photo.file_id);
+      const result = await processExpense(buffer, 'image/jpeg', `boleta_${Date.now()}.jpg`, msg.date);
+      await sendMessage(chatId, buildExpenseReply(result));
+    } catch(e) {
+      console.error('Error foto:', e.message);
+      await sendMessage(chatId, `❌ Error procesando imagen: ${e.message}`);
+    }
+    return;
+  }
+
+  // Documento (PDF o imagen como archivo)
+  if (msg.document) {
+    const doc = msg.document;
+    const accepted = ['application/pdf','image/jpeg','image/png','image/jpg','image/webp'];
+    if (!accepted.includes(doc.mime_type)) {
+      await sendMessage(chatId, '⚠️ Solo acepto fotos o PDFs para registrar gastos.');
+      return;
+    }
+    await sendMessage(chatId, '⏳ Procesando documento...');
+    try {
+      const buffer = await downloadTelegramFile(doc.file_id);
+      const fileName = doc.file_name || `doc_${Date.now()}`;
+      const result = await processExpense(buffer, doc.mime_type, fileName, msg.date);
+      await sendMessage(chatId, buildExpenseReply(result));
+    } catch(e) {
+      console.error('Error documento:', e.message);
+      await sendMessage(chatId, `❌ Error procesando documento: ${e.message}`);
+    }
+    return;
+  }
+
+  // Texto (comportamiento original)
+  if (msg.text) {
+    try {
+      await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: "typing" });
+      const reply = await runAgent(chatId, msg.text);
+      await sendMessage(chatId, reply);
+    } catch(e) {
+      console.error("Agent error:", e.response?.data || e.message);
+      await sendMessage(chatId, "❌ Ocurrió un error. Intenta de nuevo.");
+    }
   }
 });
 
@@ -513,7 +575,6 @@ function scheduleDailyEmail() {
 scheduleDailyEmail();
 scheduleEmailScans(sendTelegramMessage);
 
-
 // ── Cuentas API ───────────────────────────────────────────────
 app.get('/cuentas', auth, async (req, res) => {
   try {
@@ -615,7 +676,6 @@ async function sendMorningBriefing() {
   }
 }
 
-// Check calendar every 5 min, send reminder 30 min before event
 const notifiedEvents = new Set();
 
 async function checkCalendarReminders() {
@@ -662,7 +722,6 @@ function scheduleMorningBriefing() {
 setInterval(checkCalendarReminders, 5 * 60 * 1000);
 scheduleMorningBriefing();
 
-// Test endpoints
 app.get("/send-briefing", (req, res) => {
   if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
   sendMorningBriefing();
