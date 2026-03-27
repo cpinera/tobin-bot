@@ -71,7 +71,7 @@ async function createExpenseRecord({ item, mes, fechaGasto, anio, totalCLP, file
 
   if (fileBuffer) {
     const url = await uploadFileToPublicUrl(fileBuffer, fileName, mimeType);
-    fields['RESPALDO BOLETA'] = [{ url, filename: fileName }];
+    fields['RESPALDO BOLETAS Y FACTURAS'] = [{ url, filename: fileName }];
   }
 
   const record = await base(TABLE).create(fields);
