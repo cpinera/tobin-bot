@@ -1,51 +1,47 @@
-# 🤖 Tobin To-Do Bot
+# Integración Airtable → Tobin Bot
 
-Bot de Telegram que gestiona tu to-do list usando Claude como agente.
+## Archivos incluidos
 
-## Deploy en Railway
+| Archivo | Qué hace |
+|---|---|
+| `airtable-expense.js` | Conecta con Airtable y sube registros + archivos |
+| `expense-agent.js` | Usa Claude para extraer datos de fotos/PDFs |
+| `telegram-handlers.js` | Handlers de Telegram para fotos y documentos |
 
-### 1. Sube el código a GitHub
+## Instalación
+
+### 1. Copia los archivos al repo
+Copia `airtable-expense.js` y `expense-agent.js` a la raíz del proyecto.
+
+### 2. Pega los handlers en index.js
+Abre `telegram-handlers.js` y pega su contenido en `index.js`:
+- Los `require` al inicio del archivo
+- Los handlers `bot.on('photo')` y `bot.on('document')` al final
+
+### 3. Instala dependencias
 ```bash
-git init
-git add .
-git commit -m "init"
-git remote add origin https://github.com/TU_USUARIO/tobin-bot.git
-git push -u origin main
+npm install airtable node-fetch form-data
 ```
 
-### 2. Crea proyecto en Railway
-1. Ve a [railway.app](https://railway.app) e inicia sesión con GitHub
-2. Clic en **"New Project"** → **"Deploy from GitHub repo"**
-3. Selecciona el repositorio `tobin-bot`
+### 4. Agrega variables de entorno en Railway
 
-### 3. Agrega variables de entorno en Railway
-En tu proyecto Railway → **Variables** → agrega:
+| Variable | Cómo obtenerla |
+|---|---|
+| `AIRTABLE_TOKEN` | airtable.com/create/tokens → scope: data.records:write |
+| `AIRTABLE_BASE_ID` | La URL de tu base: airtable.com/**appXXXXXXX**/... |
 
-| Variable | Valor |
-|----------|-------|
-| `TELEGRAM_TOKEN` | `8785304220:AAGeQlc77pm5Eh5MwtpzpivrAkATT9_tpUA` |
-| `ANTHROPIC_KEY` | `sk-ant-api03-hpmpnXbtr-...` |
+## Cómo funciona
 
-### 4. Obtén tu URL de Railway
-En Railway → tu proyecto → **Settings** → **Domains** → genera un dominio público.
-Será algo como: `https://tobin-bot-production.up.railway.app`
+1. Le mandas una foto o PDF al bot por Telegram
+2. El bot descarga el archivo
+3. Claude analiza el documento y extrae: item, fecha, total (convierte USD→CLP si aplica)
+4. Se sube el archivo y se crea el registro en Airtable → Rend. CPM
 
-### 5. Registra el webhook (una sola vez)
-```bash
-bash setup-webhook.sh https://tobin-bot-production.up.railway.app
-```
+## Nombre de columnas (deben coincidir exactamente)
 
-O manualmente en el navegador:
-```
-https://api.telegram.org/bot8785304220:AAGeQlc77pm5Eh5MwtpzpivrAkATT9_tpUA/setWebhook?url=https://TU-URL.railway.app/webhook
-```
-
-## ✅ Listo — Habla con tu bot en @tobin77_bot
-
-### Ejemplos de uso:
-- *"Agrégame llamar a Santiago mañana, urgencia alta"*
-- *"¿Qué tengo pendiente?"*
-- *"Marca como listo el task #3"*
-- *"Crea una tarea de $500 en 3 cuotas"*
-- *"¿Cuánto debo en cuotas?"*
-- *"Muéstrame todo"*
+- `Item`
+- `MES`
+- `Fecha del Gasto`
+- `Año`
+- `TOTAL`
+- `RESPALDO BOLETA`
