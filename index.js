@@ -393,6 +393,25 @@ app.get('/oauth/callback', async (req, res) => {
 // ── Expense helpers ───────────────────────────────────────────
 const { processExpense } = require('./expense-agent');
 
+// ── Voice transcription (OpenAI Whisper) ─────────────────────
+const FormData = require('form-data');
+
+async function transcribeVoice(fileBuffer, mimeType) {
+  const form = new FormData();
+  // Telegram envía audio como .oga (ogg/opus) — Whisper lo acepta como .ogg
+  form.append('file', fileBuffer, { filename: 'audio.ogg', contentType: mimeType || 'audio/ogg' });
+  form.append('model', 'whisper-1');
+  form.append('language', 'es');
+
+  const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', form, {
+    headers: {
+      ...form.getHeaders(),
+      'Authorization': `Bearer ${process.env.OPENAI_KEY}`,
+    },
+  });
+  return res.data.text;
+}
+
 async function downloadTelegramFile(fileId) {
   const infoRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
   const filePath = infoRes.data.result.file_path;
@@ -456,6 +475,24 @@ app.post("/webhook", async (req, res) => {
     } catch(e) {
       console.error('Error documento:', e.message);
       await sendMessage(chatId, `❌ Error procesando documento: ${e.message}`);
+    }
+    return;
+  }
+
+  // Audio / nota de voz
+  if (msg.voice || msg.audio) {
+    const audio = msg.voice || msg.audio;
+    try {
+      await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: "typing" });
+      const buffer = await downloadTelegramFile(audio.file_id);
+      const mimeType = audio.mime_type || 'audio/ogg';
+      const transcript = await transcribeVoice(buffer, mimeType);
+      console.log(`Voz transcrita [${chatId}]:`, transcript);
+      const reply = await runAgent(chatId, transcript);
+      await sendMessage(chatId, `🎤 _"${transcript}"_\n\n${reply}`);
+    } catch(e) {
+      console.error('Error voz:', e.response?.data || e.message);
+      await sendMessage(chatId, `❌ No pude entender el audio: ${e.message}`);
     }
     return;
   }
