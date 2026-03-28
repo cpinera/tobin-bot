@@ -69,9 +69,11 @@ async function dbUpdate(id, data) {
   if (data.cuotaList !== undefined) body.cuota_list = data.cuotaList;
   if (data.valor     !== undefined) body.valor     = data.valor;
   if (data.esfuerzo  !== undefined) body.esfuerzo  = data.esfuerzo;
+  if (data.subtasks  !== undefined) body.subtasks  = data.subtasks;
   const res = await axios.patch(`${SUPABASE_URL}/rest/v1/tasks?id=eq.${id}`, body, { headers: SUPA_HEADERS });
-  const row = res.data[0];
-  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], valor:row.valor||5, esfuerzo:row.esfuerzo||5 };
+  const row = res.data && res.data[0];
+  if (!row) return { id }; // Supabase returned empty (field may not exist yet)
+  return { id:row.id, nombre:row.nombre, estado:row.estado, urgencia:row.urgencia, fecha:row.fecha, monto:row.monto, cuotas:row.cuotas, cuotaList:row.cuota_list||[], valor:row.valor||5, esfuerzo:row.esfuerzo||5, subtasks:row.subtasks||[] };
 }
 
 async function dbDelete(id) {
