@@ -39,6 +39,7 @@ async function dbGetAll() {
     cuotaList: row.cuota_list || [],
     valor:     row.valor    || 5,
     esfuerzo:  row.esfuerzo || 5,
+    subtasks:  row.subtasks  || [],
     createdAt: row.created_at
   }));
 }
