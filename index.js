@@ -54,5 +54,72 @@ setInterval(checkCalendarReminders, 5 * 60 * 1000);
 scheduleMorningBriefing();
 app.get("/send-briefing", (req, res) => { if (req.headers["x-api-key"] !== API_SECRET) return res.status(401).json({ error: "Unauthorized" }); sendMorningBriefing(); res.json({ ok: true, message: "Enviando briefing..." }); });
 
+// ══════════════════════════════════════════════════════════════
+// ENDPOINT: POST /analizar-tc
+// Recibe cartola en base64, llama a Claude, retorna movimientos
+// ══════════════════════════════════════════════════════════════
+app.post('/analizar-tc', auth, async (req, res) => {
+  try {
+    const { base64, mimeType, tarjeta, periodo, gfCatalog } = req.body;
+    if (!base64 || !mimeType) return res.status(400).json({ error: "Falta archivo" });
+
+    const isPDF = mimeType === 'application/pdf';
+    const contentBlock = isPDF
+      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+      : { type: "image",    source: { type: "base64", media_type: mimeType, data: base64 } };
+
+    const gfRef = (gfCatalog || []).map((r, i) => `${i+1}:${r[1]}(${r[0]})`).join(",");
+
+    const sysPrompt = [
+      "Eres un asistente financiero personal analizando movimientos de tarjeta de crédito para Cristóbal.",
+      "1. Extraer TODOS los movimientos (ignorar pagos/abonos al banco)",
+      "2. Cruzar con gastos fijos: " + gfRef,
+      "3. Categorizar en: Alimentacion Familia, Viajes, Ropa/Shopping, Salud, Software, Deporte, Restaurantes, Transporte, Entretenimiento, Educacion, Hogar, Otros",
+      "REGLAS:",
+      "- Uber Eats + Supermercado = Alimentacion Familia",
+      "- COPEC APP / ARAMCO = Transporte",
+      "- Club de Golf Los Leones = item_id 22",
+      "- Starlink = item_id 9",
+      "- Colegio Cordillera = item_id 18, VMA = item_id 17, Cantagallo = item_id 19",
+      "- PAT CONSORCIO GENALE = item_id 23 o 24 (Seguros Auto)",
+      'Responde SOLO JSON sin texto adicional: {"movimientos":[{"fecha":"2026-03-05","descripcion":"VMA","monto":781536,"moneda":"CLP","categoria":"Colegios","gf_item_id":17,"es_gasto_fijo":true,"revisado":true}],"dudosos":[],"total":0,"resumen":""}'
+    ].join("\n");
+
+    const anthropicResp = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4000,
+        system: sysPrompt,
+        messages: [{
+          role: "user",
+          content: [
+            contentBlock,
+            { type: "text", text: `Analiza este estado de cuenta de ${tarjeta} del período ${periodo}.` }
+          ]
+        }]
+      },
+      {
+        headers: {
+          "x-api-key": process.env.ANTHROPIC_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        }
+      }
+    );
+
+    const raw = (anthropicResp.data.content || []).map(b => b.text || "").join("");
+    const jm = raw.match(/\{[\s\S]*\}/);
+    if (!jm) throw new Error("No se pudo parsear la respuesta de Claude");
+    const result = JSON.parse(jm[0]);
+
+    res.json({ ok: true, ...result });
+  } catch(e) {
+    console.error("Error /analizar-tc:", e.response?.data || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
