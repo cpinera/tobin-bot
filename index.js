@@ -768,3 +768,130 @@ app.get("/send-briefing", (req, res) => {
   sendMorningBriefing();
   res.json({ ok: true, message: "Enviando briefing..." });
 });
+# Nuevos endpoints que necesitas agregar en index.js (Railway)
+
+## GF Items
+GET    /gf/items                          → lista todos los items activos
+PATCH  /gf/items/:id                      → actualiza nombre/categoria/moneda/es_tc
+
+## GF Registros (checklist mensual)
+GET    /gf/registros?mes=X&anio=Y         → registros del mes
+PATCH  /gf/registros/:itemId/:mes/:anio   → upsert estado/monto/nota/pagado_con_tc
+POST   /gf/generar                        → genera registros para mes/anio si no existen
+  body: { mes, anio }
+
+## Ingresos
+GET    /ingresos?mes=X&anio=Y             → ingresos del mes
+POST   /ingresos                          → { tipo, descripcion, mes, anio, monto, moneda }
+PATCH  /ingresos/:id                      → actualiza campos
+DELETE /ingresos/:id                      → elimina
+
+## Movimientos TC
+GET    /movimientos_tc?mes=X&anio=Y       → movimientos del mes
+POST   /movimientos_tc                    → { tarjeta, fecha, descripcion, monto, moneda, categoria, gf_item_id, es_gasto_fijo, revisado, mes, anio }
+PATCH  /movimientos_tc/:id                → actualiza campos
+DELETE /movimientos_tc/:id                → elimina
+
+## Notas del mes
+GET    /notas_mes?mes=X&anio=Y            → { nota }
+POST   /notas_mes                         → { mes, anio, nota } (upsert)
+
+---
+
+## Snippet para index.js
+
+const SUPA = process.env.SUPABASE_URL;
+const SUPA_H = { "apikey": process.env.SUPABASE_KEY, "Authorization": `Bearer ${process.env.SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" };
+
+// GF Items
+app.get('/gf/items', auth, async (req, res) => {
+  const r = await axios.get(`${SUPA}/rest/v1/gf_items?activo=eq.true&order=categoria,orden`, { headers: SUPA_H });
+  res.json({ items: r.data });
+});
+app.patch('/gf/items/:id', auth, async (req, res) => {
+  const r = await axios.patch(`${SUPA}/rest/v1/gf_items?id=eq.${req.params.id}`, req.body, { headers: SUPA_H });
+  res.json({ item: r.data[0] });
+});
+
+// GF Registros
+app.get('/gf/registros', auth, async (req, res) => {
+  const { mes, anio } = req.query;
+  const r = await axios.get(`${SUPA}/rest/v1/gf_registros?mes=eq.${mes}&anio=eq.${anio}`, { headers: SUPA_H });
+  res.json({ registros: r.data });
+});
+app.patch('/gf/registros/:itemId/:mes/:anio', auth, async (req, res) => {
+  const { itemId, mes, anio } = req.params;
+  // upsert
+  const check = await axios.get(`${SUPA}/rest/v1/gf_registros?item_id=eq.${itemId}&mes=eq.${mes}&anio=eq.${anio}`, { headers: SUPA_H });
+  if (check.data.length > 0) {
+    const r = await axios.patch(`${SUPA}/rest/v1/gf_registros?item_id=eq.${itemId}&mes=eq.${mes}&anio=eq.${anio}`, req.body, { headers: SUPA_H });
+    res.json({ registro: r.data[0] });
+  } else {
+    const r = await axios.post(`${SUPA}/rest/v1/gf_registros`, { item_id: parseInt(itemId), mes: parseInt(mes), anio: parseInt(anio), ...req.body }, { headers: SUPA_H });
+    res.json({ registro: r.data[0] });
+  }
+});
+app.post('/gf/generar', auth, async (req, res) => {
+  const { mes, anio } = req.body;
+  const items = await axios.get(`${SUPA}/rest/v1/gf_items?activo=eq.true`, { headers: SUPA_H });
+  const existing = await axios.get(`${SUPA}/rest/v1/gf_registros?mes=eq.${mes}&anio=eq.${anio}`, { headers: SUPA_H });
+  const existingIds = existing.data.map(r => r.item_id);
+  const toCreate = items.data.filter(i => !existingIds.includes(i.id)).map(i => ({ item_id: i.id, mes, anio, monto: 0, estado: 'pendiente' }));
+  if (toCreate.length > 0) await axios.post(`${SUPA}/rest/v1/gf_registros`, toCreate, { headers: SUPA_H });
+  res.json({ ok: true, created: toCreate.length });
+});
+
+// Ingresos
+app.get('/ingresos', auth, async (req, res) => {
+  const { mes, anio } = req.query;
+  const r = await axios.get(`${SUPA}/rest/v1/ingresos?mes=eq.${mes}&anio=eq.${anio}&order=created_at`, { headers: SUPA_H });
+  res.json({ ingresos: r.data });
+});
+app.post('/ingresos', auth, async (req, res) => {
+  const r = await axios.post(`${SUPA}/rest/v1/ingresos`, req.body, { headers: SUPA_H });
+  res.json({ ingreso: r.data[0] });
+});
+app.patch('/ingresos/:id', auth, async (req, res) => {
+  const r = await axios.patch(`${SUPA}/rest/v1/ingresos?id=eq.${req.params.id}`, req.body, { headers: SUPA_H });
+  res.json({ ingreso: r.data[0] });
+});
+app.delete('/ingresos/:id', auth, async (req, res) => {
+  await axios.delete(`${SUPA}/rest/v1/ingresos?id=eq.${req.params.id}`, { headers: SUPA_H });
+  res.json({ ok: true });
+});
+
+// Movimientos TC
+app.get('/movimientos_tc', auth, async (req, res) => {
+  const { mes, anio } = req.query;
+  const r = await axios.get(`${SUPA}/rest/v1/movimientos_tc?mes=eq.${mes}&anio=eq.${anio}&order=monto.desc`, { headers: SUPA_H });
+  res.json({ movimientos: r.data });
+});
+app.post('/movimientos_tc', auth, async (req, res) => {
+  const r = await axios.post(`${SUPA}/rest/v1/movimientos_tc`, req.body, { headers: SUPA_H });
+  res.json({ movimiento: r.data[0] });
+});
+app.patch('/movimientos_tc/:id', auth, async (req, res) => {
+  const r = await axios.patch(`${SUPA}/rest/v1/movimientos_tc?id=eq.${req.params.id}`, req.body, { headers: SUPA_H });
+  res.json({ movimiento: r.data[0] });
+});
+app.delete('/movimientos_tc/:id', auth, async (req, res) => {
+  await axios.delete(`${SUPA}/rest/v1/movimientos_tc?id=eq.${req.params.id}`, { headers: SUPA_H });
+  res.json({ ok: true });
+});
+
+// Notas del mes
+app.get('/notas_mes', auth, async (req, res) => {
+  const { mes, anio } = req.query;
+  const r = await axios.get(`${SUPA}/rest/v1/notas_mes?mes=eq.${mes}&anio=eq.${anio}`, { headers: SUPA_H });
+  res.json({ nota: r.data[0]?.nota || '' });
+});
+app.post('/notas_mes', auth, async (req, res) => {
+  const { mes, anio, nota } = req.body;
+  const check = await axios.get(`${SUPA}/rest/v1/notas_mes?mes=eq.${mes}&anio=eq.${anio}`, { headers: SUPA_H });
+  if (check.data.length > 0) {
+    await axios.patch(`${SUPA}/rest/v1/notas_mes?mes=eq.${mes}&anio=eq.${anio}`, { nota, updated_at: new Date() }, { headers: SUPA_H });
+  } else {
+    await axios.post(`${SUPA}/rest/v1/notas_mes`, { mes, anio, nota }, { headers: SUPA_H });
+  }
+  res.json({ ok: true });
+});
