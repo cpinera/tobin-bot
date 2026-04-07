@@ -649,7 +649,7 @@ app.post("/analizar-tc", auth, async (req, res) => {
         headers: {
           "x-api-key": ANTHROPIC_KEY,
           "anthropic-version": "2023-06-01",
-          "anthropic-beta": "pdfs-2024-09-25,images-2023-10-16",
+          "anthropic-beta": "pdfs-2024-09-25",
           "content-type": "application/json"
         }
       }
