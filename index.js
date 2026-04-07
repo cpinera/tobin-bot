@@ -649,6 +649,7 @@ app.post("/analizar-tc", auth, async (req, res) => {
         headers: {
           "x-api-key": ANTHROPIC_KEY,
           "anthropic-version": "2023-06-01",
+          "anthropic-beta": "pdfs-2024-09-25,images-2023-10-16",
           "content-type": "application/json"
         }
       }
@@ -682,8 +683,9 @@ app.post("/analizar-tc", auth, async (req, res) => {
 
     res.json({ ok: true, ...result });
   } catch(e) {
-    console.error("Error /analizar-tc:", e.response?.data || e.message);
-    res.status(500).json({ error: e.message });
+    const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+    console.error("Error /analizar-tc:", detail);
+    res.status(500).json({ error: e.message, detail: e.response?.data || null });
   }
 });
 
