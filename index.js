@@ -702,6 +702,27 @@ app.post("/analizar-tc", auth, async (req, res) => {
 });
 
 // ── Finanzas endpoints (GF, Ingresos, Movimientos TC, Notas) ──
+app.get("/gf/items", auth, async (req, res) => {
+  try {
+    const r = await axios.get(`${SUPABASE_URL}/rest/v1/gf_items?order=categoria,orden`, { headers: SUPA_HEADERS });
+    res.json({ items: r.data });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/gf/items", auth, async (req, res) => {
+  try {
+    const r = await axios.post(`${SUPABASE_URL}/rest/v1/gf_items`, req.body, { headers: SUPA_HEADERS });
+    res.json({ item: r.data[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch("/gf/items/:id", auth, async (req, res) => {
+  try {
+    const r = await axios.patch(`${SUPABASE_URL}/rest/v1/gf_items?id=eq.${req.params.id}`, req.body, { headers: SUPA_HEADERS });
+    res.json({ ok: true, item: r.data[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/gf/registros", auth, async (req, res) => {
   try {
     const { mes, anio } = req.query;
@@ -805,6 +826,41 @@ app.post("/notas_mes", auth, async (req, res) => {
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Gastos directos (pagos manuales que NO son TC) ──
+// Usan tabla ingresos con monto negativo y tipo "Gasto directo"
+app.get("/gastos_directos", auth, async (req, res) => {
+  try {
+    const { mes, anio } = req.query;
+    const r = await axios.get(
+      `${SUPABASE_URL}/rest/v1/ingresos?mes=eq.${mes}&anio=eq.${anio}&tipo=eq.Gasto directo&order=created_at.desc`,
+      { headers: SUPA_HEADERS }
+    );
+    res.json({ gastos: r.data });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/gastos_directos", auth, async (req, res) => {
+  try {
+    const { categoria, descripcion, mes, anio, monto, moneda } = req.body;
+    const r = await axios.post(`${SUPABASE_URL}/rest/v1/ingresos`, {
+      tipo: "Gasto directo",
+      descripcion: `[${categoria}] ${descripcion}`,
+      mes: parseInt(mes), anio: parseInt(anio),
+      monto: -(Math.abs(parseFloat(monto)||0)), // negativo = gasto
+      moneda: moneda || "CLP"
+    }, { headers: SUPA_HEADERS });
+    res.json({ gasto: r.data[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/gastos_directos/:id", auth, async (req, res) => {
+  try {
+    await axios.delete(`${SUPABASE_URL}/rest/v1/ingresos?id=eq.${req.params.id}`, { headers: SUPA_HEADERS });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
