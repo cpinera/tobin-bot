@@ -594,67 +594,270 @@ app.get("/send-briefing", (req, res) => {
   res.json({ ok: true });
 });
 
-// ══════════════════════════════════════════════════════════════
-// ENDPOINT: POST /analizar-tc
-// ══════════════════════════════════════════════════════════════
-app.post("/analizar-tc", auth, async (req, res) => {
+// ══════════════════════════════════════════════════════════════════════
+// FINANZAS v2 — análisis de cartolas con contexto histórico
+// ══════════════════════════════════════════════════════════════════════
+
+const MESES_NOMBRE = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+// Construye el system prompt para el análisis de cartolas (TC y cta cte).
+function buildSystemPrompt({ cuenta_tipo, cuenta_id, cuenta_nombre, periodo, gfCatalog, cuentasCorrientes, tarjetasCredito, suscripcionesConocidas, contexto }) {
+  const ctx = contexto || {};
+  const reglas = ctx.reglas || { tolerancia_monto_pct: 0.5, tolerancia_monto_abs: 100, tolerancia_fecha_dias: 5 };
+  const ciclo = ctx.cicloTC || { desde_dia: 21, hasta_dia: 20 };
+  const mesActual = ctx.mesActual;
+  const anioActual = ctx.anioActual;
+
+  const gfRef = (gfCatalog || []).map((r, i) => {
+    if (Array.isArray(r)) return `${i+1}: ${r[1]} (${r[0]})`;
+    return `${r.id}: ${r.nombre || r.descripcion} (${r.categoria})`;
+  }).join("\n  ");
+
+  const ccRef = (cuentasCorrientes || []).map(c => `${c.id}: ${c.nombre} (${c.moneda})`).join("\n  ");
+  const tcRef = (tarjetasCredito  || []).map(c => `${c.id}: ${c.nombre} (${c.moneda})`).join("\n  ");
+
+  const subsRef = (suscripcionesConocidas || []).slice(0, 30).map(s => {
+    const meses = (s.monthsSeen || []).join(",") || "—";
+    return `${s.n}: $${s.clp || 0} CLP (vista en ${meses})`;
+  }).join("\n  ");
+
+  const histMovs = (ctx.movimientosUltimosMeses || []).slice(0, 80).map(m => {
+    const flags = [m.es_ingreso && "ing", m.es_suscripcion && "sub", m.es_transferencia_interna && "int", m.es_gasto_fijo && `gf=${m.gf_item_id}`].filter(Boolean).join(",");
+    return `${m.fecha} | ${m.cuenta_id} | $${m.monto} | "${(m.descripcion || "").slice(0, 50)}" | ${m.categoria || "?"} ${flags ? "["+flags+"]" : ""}`;
+  }).join("\n  ");
+
+  const movsActual = (ctx.movimientosMesActual || []).slice(0, 60).map(m => {
+    const flags = [m.es_ingreso && "ing", m.es_transferencia_interna && "int", m.es_gasto_fijo && "gf"].filter(Boolean).join(",");
+    return `${m.fecha} | ${m.cuenta_id} | $${m.monto} | "${(m.descripcion || "").slice(0, 50)}" ${flags ? "["+flags+"]" : ""}`;
+  }).join("\n  ");
+
+  const ingResgRef = (ctx.ingresosRegistrados || []).slice(0, 30).map(i =>
+    `${i.tipo}: $${i.monto} ${i.moneda || "CLP"} (${i.mes}/${i.anio})${i.descripcion ? " — "+i.descripcion : ""}`
+  ).join("\n  ");
+
+  const tipoCartola = cuenta_tipo === "cuenta_corriente" ? "una CUENTA CORRIENTE" : "una TARJETA DE CRÉDITO";
+
+  return `Eres un asistente financiero personal analizando ${tipoCartola} de Cristóbal Piñera.
+
+CONTEXTO BÁSICO
+═══════════════════════════════════════════════════════════════════
+Cuenta a analizar: ${cuenta_nombre} (id: ${cuenta_id}, tipo: ${cuenta_tipo})
+Período declarado por el usuario: ${periodo}
+Mes/año declarado: ${mesActual}/${anioActual}
+
+CATÁLOGO DE GASTOS FIJOS (id : nombre (categoria))
+═══════════════════════════════════════════════════════════════════
+  ${gfRef}
+
+CUENTAS DEL USUARIO
+═══════════════════════════════════════════════════════════════════
+Tarjetas de crédito:
+  ${tcRef}
+
+Cuentas corrientes:
+  ${ccRef}
+
+SUSCRIPCIONES CONOCIDAS
+═══════════════════════════════════════════════════════════════════
+  ${subsRef || "(ninguna registrada todavía)"}
+
+MOVIMIENTOS HISTÓRICOS (últimos 3 meses) — para detectar patrones recurrentes
+═══════════════════════════════════════════════════════════════════
+  ${histMovs || "(sin histórico)"}
+
+MOVIMIENTOS YA EXTRAÍDOS DE OTRAS CARTOLAS DEL MISMO MES (no los repitas)
+═══════════════════════════════════════════════════════════════════
+  ${movsActual || "(esta es la primera cartola del mes)"}
+
+INGRESOS YA REGISTRADOS POR EL USUARIO
+═══════════════════════════════════════════════════════════════════
+  ${ingResgRef || "(sin ingresos registrados aún)"}
+
+CICLO TC: las TC chilenas cierran del día ${ciclo.desde_dia} al día ${ciclo.hasta_dia} del mes siguiente.
+TOLERANCIAS: ±${reglas.tolerancia_monto_pct}% o ±$${reglas.tolerancia_monto_abs} se considera "mismo monto".
+
+═══════════════════════════════════════════════════════════════════
+REGLAS DE EXTRACCIÓN
+═══════════════════════════════════════════════════════════════════
+
+REGLA 1 — FILTRO DE MES (CRÍTICA, NO ROMPER)
+${cuenta_tipo === "cuenta_corriente"
+  ? `  - Las cartolas de cuenta corriente Security pueden incluir hasta 5 meses
+    de movimientos históricos. EXTRAE SOLO los movimientos cuya fecha esté
+    en el mes ${mesActual}/${anioActual} (1 al último día).
+  - Ignora todo lo demás aunque aparezca en el PDF.`
+  : `  - Las cartolas TC chilenas cierran ~día 20-22. Una "cartola de ${MESES_NOMBRE[mesActual-1]}"
+    típica trae movimientos del día ${ciclo.desde_dia} del mes anterior al día ${ciclo.hasta_dia}
+    de ${MESES_NOMBRE[mesActual-1]}. Extrae todos esos movimientos y asígnalos al mes ${mesActual}.`}
+
+REGLA 2 — CATEGORÍAS (usa EXACTAMENTE estos nombres)
+  Restaurantes, Alimentación Familia, Salud, Ropa/Shopping, Hogar, Viajes,
+  Suscripciones, Software, Deporte, Transporte, Entretenimiento, Educación,
+  Servicios, Casa Santiago, Casa Cachagua, Créditos, Sueldos, Seguros,
+  Trimestrales, Ingreso, Transferencia interna, Otros.
+
+REGLA 3 — DETECTAR INGRESOS (es_ingreso:true)
+  Patrones a marcar como ingreso:
+  - "ABONO DE REMUNERACIONES" en cta cte Security cc2 → tipo_ingreso:"Sueldo Tantauco" (confirmado por usuario).
+  - "TRANSFERENCIA DESDE Chile DE INVERSIONES ODISEA" → tipo_ingreso:"Sueldo Odisea".
+  - "TRANSF. ASESORIAS" con RUT 77.479.934-6 → tipo_ingreso:"Sueldo Tantauco" (probable, confirmar si monto es atípico).
+  - "TRANSF DE JUAN SEBASTIAN PINE" → tipo_ingreso:"Otro retiro / aporte familiar".
+  - "TRANSFERENCIA BTG PACTUAL" → tipo_ingreso:"Rescate inversión" (NO recurrente).
+  - "PAGO PROVEEDOR COLMENA GOL" / "PAGO PROVEEDOR CNS SEGUROS" → tipo_ingreso:"Devolución" (NO recurrente).
+  - Cualquier abono >$500.000 que no caiga en patrones conocidos → marca es_ingreso:true PERO agrega a "dudosos" con razon:"ingreso_no_esperado".
+
+REGLA 4 — DETECTAR TRANSFERENCIAS INTERNAS (es_transferencia_interna:true, NO contar como gasto)
+  Pagos de TC desde cta cte:
+  - "Traspaso Internet a T. Crédito" (Santander cc1) → es_transferencia_interna:true.
+    Match el monto con MONTO TOTAL FACTURADO de las TC del mes para sugerir cuenta_destino_sugerida.
+  - "PAGO TARJETA CREDITO POR INTERNET" (Security cc2) → es_transferencia_interna:true.
+  - "COMPRA USD POR INTERNET PARA PAGO T.CREDITO" (Security cc2) → es_transferencia_interna:true.
+    Es la compra de USD para pagar TC USD. NO es gasto.
+  - "Egreso por Compra de Divisas" (Santander cc1) → es_transferencia_interna:true.
+    Suelen venir en pares pequeños (uno por monto, otro por costo); ambos son interna.
+
+  Transferencias entre cuentas propias (todas es_transferencia_interna:true):
+  - "TRANSFERENCIA DESDE Santander DE CRISTOBAL PINERA MOREL" / "TRANSFERENCIA DESDE Security DE CRISTOBAL PI?ERA MOREL"
+    (la "?" es ñ mal codeada).
+  - "TRANSFERENCIA A Security PARA Oahu" → cuenta_destino_sugerida:"cc5".
+  - "TRANSFERENCIA A Security PARA Sofia Marin" → cuenta_destino_sugerida:"cc3".
+  - "TRANSFERENCIA A Santander PARA cristobal" → cuenta_destino_sugerida:"cc1".
+  - "TRANSF A CUENTA SECURITY" → cuenta_destino_sugerida:"cc2".
+  - "TRANSF A SOFIA MARIN" → cuenta_destino_sugerida:"cc3".
+
+REGLA 5 — RUIDO BANCARIO (categoria:"Transferencia interna", monto correcto, NO contar como gasto)
+  Estos siempre vienen en pares y se cancelan entre sí:
+  - "TRANSFERENCIA DESDE LÍNEA DE SOBREGIRO"
+  - "PAGO DE LINEA DE CREDITO"
+  - "PAGO AUTOMATICO LINEA SOBREGIRO"
+  Marca todos como es_transferencia_interna:true.
+
+  Estos SÍ son gastos pequeños (Servicios):
+  - "INTERES POR USO LINEA DE SOBREGIRO" (~$25k)
+  - "IMPTO CARGO USO LINEA DE SOBREGIRO" (~$1k)
+  - "COM.MANTENCION PLAN" (~$23k)
+
+REGLA 6 — GASTOS FIJOS (es_gasto_fijo:true con gf_item_id correcto)
+  Match SOLO contra IDs reales del catálogo de arriba. NO inventar IDs.
+
+  Patrones confirmados:
+  - "COLEGIO VILLA MARIA" o "VMA" → gf_item_id:17 (VMA).
+  - "Cordillera" o "COL CORDILLERA" → gf_item_id:18 (puede aparecer hasta 3 veces, una por hijo).
+  - "TRANSF A GABRIEL" (puede partido en varios pagos en el mismo mes) → gf_item_id:14, sumar todos.
+  - "TRANSF A VIVIAN JESSY" → gf_item_id:15.
+  - "TRANSF A RICARDO" → gf_item_id:16.
+  - "PAGO AUTOMATICO DE CREDITO HIPOTECARIO" en Oahu cc5 (~$3.250.000) → gf_item_id:10 (Oficina).
+  - "PAGO WEB HIPOTECARIO" o "PRESTAMOS CUOTA FIJA" en Security cc2 con monto ~$4.500.000 → gf_item_id:11 (Terreno).
+  - Cargos de hipotecario Santander 1 (~$397k) → gf_item_id:12.
+  - Cargos de hipotecario Santander 2 (~$411k) → gf_item_id:13.
+  - "PAT CONSORCIO GEN ALE" en TC → categoria:"Seguros", es_gasto_fijo:false (ya está incluido en el cargo total de la TC).
+
+REGLA 7 — SUSCRIPCIONES (es_suscripcion:true)
+  - Si el cargo coincide con un nombre de "SUSCRIPCIONES CONOCIDAS" arriba con monto ±10%,
+    marca silenciosamente es_suscripcion:true.
+  - Si el monto cambió >10% vs lo conocido, marca dudoso con razon:"cambio_monto" y referencia:{n,clp}.
+  - Si NO está en el catálogo pero parece recurrente (Apple, Netflix, Spotify, OpenAI, Claude,
+    ChatGPT, Google, Microsoft, X Corp, Patreon, Audible, iCloud, Zwift, Strava, TrainingPeaks,
+    Booking, etc.), Y existe un cargo similar en el histórico de los últimos 3 meses,
+    marca es_suscripcion:true silenciosamente.
+  - Si parece nueva (no está en catálogo NI en histórico), marca es_suscripcion:true PERO
+    agrega a dudosos con razon:"suscripcion_nueva".
+
+REGLA 8 — RECONCILIACIÓN CRUZADA (lo nuevo vs lo registrado)
+  Para cada movimiento que parece coincidir con uno del histórico o del mes actual:
+  - Match exacto (diff <$10 ó <0.005%): silencioso.
+  - Match aproximado (diff <$100 ó <0.5%): silencioso, anota en descripción "(aprox)".
+  - Discrepancia (diff <$1000 ó <2%): marca dudoso con razon:"discrepancia_monto" y
+    referencia:{monto, descripcion, fuente}.
+  - Match imposible (diff mayor): trata como movimiento separado.
+
+  EJEMPLO CRÍTICO:
+  Usuario tiene ingreso registrado: Sueldo Tantauco $10.000.000 (de marzo).
+  Cartola muestra: ABONO DE REMUNERACIONES $10.202.531.
+  → Marca el movimiento es_ingreso:true tipo_ingreso:"Sueldo Tantauco" PERO en dudosos:
+    {"idx":N, "razon":"discrepancia_monto", "referencia":{"monto":10000000,"descripcion":"Sueldo Tantauco","fuente":"ingreso registrado mes anterior"}}
+
+REGLA 9 — DUDOSOS QUE DEBES EMITIR (cada uno con razon)
+  - "discrepancia_monto" → match con monto cercano pero no exacto.
+  - "pago_tc_sin_match" → pago a TC propia sin contraparte clara en otra cuenta.
+  - "fecha_ambigua" → fecha cae entre día 18 y 23 (zona de cruce ciclo TC).
+  - "suscripcion_nueva" → cargo recurrente no conocido.
+  - "cambio_monto" → suscripción conocida con monto diferente.
+  - "gasto_extraordinario" → monto >$500.000 CLP no clasificado claramente
+    (incluye el pago al SII si aparece, monto típico >$10M).
+  - "ingreso_no_esperado" → depósito que no matchea con tipos conocidos.
+
+═══════════════════════════════════════════════════════════════════
+FORMATO DE RESPUESTA (SOLO JSON, NADA MÁS)
+═══════════════════════════════════════════════════════════════════
+{
+  "mes_detectado": ${mesActual},
+  "anio_detectado": ${anioActual},
+  "periodo_detectado": "string como aparece en cartola",
+  "tarjeta_detectada": "string",
+  "total": <suma de gastos no-internos>,
+  "resumen": "1-2 frases con hallazgos clave: suscripciones nuevas, cambios vs mes anterior, gastos extraordinarios",
+  "movimientos": [
+    {
+      "fecha": "YYYY-MM-DD",
+      "descripcion": "string",
+      "monto": number,
+      "moneda": "CLP" | "USD",
+      "categoria": "string del catálogo de Regla 2",
+      "es_gasto_fijo": boolean,
+      "gf_item_id": number | null,
+      "es_ingreso": boolean,
+      "tipo_ingreso": "string" | null,
+      "es_suscripcion": boolean,
+      "es_transferencia_interna": boolean,
+      "cuenta_destino_sugerida": "tcN | ccN | null",
+      "revisado": true
+    }
+  ],
+  "dudosos": [
+    {"idx": number, "razon": "string", "razon_extra": "string opcional", "referencia": {} }
+  ]
+}`;
+}
+
+// Función compartida que llama a Claude para analizar una cartola.
+async function analizarCartola(req, res) {
   try {
-    const { base64, mimeType, tarjeta, periodo, gfCatalog } = req.body;
+    const {
+      base64, mimeType, cuenta_id, cuenta_nombre, cuenta_tipo, periodo,
+      gfCatalog, cuentasCorrientes, tarjetasCredito, suscripcionesConocidas, contexto,
+      tarjeta // compatibilidad con frontend viejo
+    } = req.body;
+
     if (!base64 || !mimeType) return res.status(400).json({ error: "Falta archivo" });
+
+    const tipoNorm = cuenta_tipo || "tc";
+    const idNorm = cuenta_id || "tc1";
+    const nombreNorm = cuenta_nombre || tarjeta || "Cuenta";
 
     const isPDF = mimeType === "application/pdf";
     const contentBlock = isPDF
       ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
       : { type: "image",    source: { type: "base64", media_type: mimeType, data: base64 } };
 
-    const gfRef = (gfCatalog || []).map((r, i) => `${i+1}:${r[1]}(${r[0]})`).join(",");
+    const sysPrompt = buildSystemPrompt({
+      cuenta_tipo: tipoNorm, cuenta_id: idNorm, cuenta_nombre: nombreNorm, periodo,
+      gfCatalog, cuentasCorrientes, tarjetasCredito, suscripcionesConocidas, contexto
+    });
 
-    const sysLines = [
-      "Eres un asistente financiero personal analizando movimientos de tarjeta de credito para Cristobal.",
-      "DETECTA automaticamente: 1) la tarjeta (banco, tipo pesos/USD, ultimos digitos si aparecen) 2) el periodo de facturacion real del documento",
-      "Agrega campo tarjeta_detectada al JSON con el nombre de la tarjeta detectada.",
-      "EXTRAE todos los movimientos de compras (ignorar pagos/abonos/transferencias al banco).",
-      "CATEGORIZA cada movimiento:",
-      "- Uber Eats: Uber Eats, Rappi, Pedidos Ya, supermercados (Jumbo, Tottus, Unimarc, Lider, Santa Isabel)",
-      "- Shopping: Falabella, Ripley, Paris, Zara, HM, Mall, tiendas, restaurantes, cafes, bares, MISCELANEO SPA, Cafe Kant, ropa, calzado, electronica, muebles, ferreteria, Sodimac, Easy",
-      "- Cuentas: COPEC, ARAMCO, bencinas, Uber (no eats), Cabify, estacionamientos, Servipag, luz, agua, gas, internet, seguros, gastos comunes, PAT CONSORCIO GENALE (seguro auto)",
-      "- Viajes: Booking.com, LATAM, Kiwi.com, Airbnb, hoteles, agencias de viaje, aeropuertos, lounge",
-            "- Shopping incluye tambien: clinicas, farmacias, salud, deporte, entretenimiento, educacion (cursos no colegios)",
-            "- Software: apps de trabajo, herramientas digitales puntuales",
-      "- Suscripciones: Netflix, Spotify, Apple, YouTube, Claude, ChatGPT, OpenAI, Microsoft, Google, Amazon Prime, MAX, Crunchyroll, Zwift, Strava, TrainingPeaks, Audible, iCloud, X Corp, Grok, cualquier cobro mensual/anual de software o app",
-                        "- Otros: lo que no encaje claramente en ninguna categoria anterior",
-      "",
-      "GASTOS FIJOS (marcar es_gasto_fijo:true con item_id correcto):",
-      "- VMA / Villa Maria = item_id 17",
-      "- Colegio Cordillera = item_id 18 (puede aparecer hasta 3 veces por 3 hijos)",
-      "- Cantagallo = item_id 19",
-      "- Starlink = item_id 9",
-      "- PAT CONSORCIO GENALE / seguros Consorcio = categoria Cuentas, es_gasto_fijo:false (ya incluido en pago TC)",
-      "- Club Golf Los Leones con monto >500000 CLP = item_id 22 (trimestral)",
-      "- Club Golf Los Leones con monto <500000 CLP = Restaurantes, NO es gasto fijo",
-      "- SII / Servicio Impuestos Internos = item_id 20",
-      "IMPORTANTE: Cuentas de servicios via Servipag (luz, agua, gas, internet) NO son gastos fijos en este sistema, marcarlas como Hogar.",
-      "",
-      "CAMPO dudosos (incluir indices 0-based):",
-      "  - Gastos >30000 CLP o >30 USD con descripcion que no puedas clasificar con certeza",
-      "  - Suscripciones o software NO listados arriba (pueden ser nuevas suscripciones desconocidas)",
-      "  - Gastos inusuales o muy altos",
-      'Responde SOLO JSON: {"tarjeta_detectada":"Santander Pesos (4814)","periodo_detectado":"Marzo 2026","mes_detectado":3,"anio_detectado":2026,"movimientos":[{"fecha":"2026-03-05","descripcion":"VMA","monto":781536,"moneda":"CLP","categoria":"Colegios","gf_item_id":17,"es_gasto_fijo":true,"revisado":true},{"fecha":"2026-03-10","descripcion":"NETFLIX","monto":12990,"moneda":"CLP","categoria":"Suscripciones","es_gasto_fijo":false,"revisado":true},{"fecha":"2026-03-15","descripcion":"COPEC APP","monto":45000,"moneda":"CLP","categoria":"Cuentas","es_gasto_fijo":false,"revisado":true}],"dudosos":[],"total":0,"resumen":""}'
-    ];
-    const sysPrompt = sysLines.join("\n");
+    const userText = tipoNorm === "cuenta_corriente"
+      ? `Analiza esta CARTOLA DE CUENTA CORRIENTE de ${nombreNorm}, período declarado ${periodo}. Recuerda Regla 1: extrae SOLO movimientos del mes ${contexto?.mesActual}/${contexto?.anioActual}.`
+      : `Analiza esta CARTOLA DE TARJETA DE CRÉDITO de ${nombreNorm}, período declarado ${periodo}. Aplica el ciclo de cierre TC.`;
 
     const anthropicResp = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
         model: "claude-sonnet-4-20250514",
-        max_tokens: 8000,
+        max_tokens: 16000,
         system: sysPrompt,
         messages: [{
           role: "user",
-          content: [
-            contentBlock,
-            { type: "text", text: `Analiza este estado de cuenta de ${tarjeta} del periodo ${periodo}. Detecta el periodo real del documento.` }
-          ]
+          content: [ contentBlock, { type: "text", text: userText } ]
         }]
       },
       {
@@ -663,19 +866,20 @@ app.post("/analizar-tc", auth, async (req, res) => {
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "pdfs-2024-09-25",
           "content-type": "application/json"
-        }
+        },
+        timeout: 120000
       }
     );
 
     const raw = (anthropicResp.data.content || []).map(b => b.text || "").join("");
     const jm = raw.match(/\{[\s\S]*\}/);
-    if (!jm) throw new Error("Claude no devolvio JSON. Inicio: " + raw.slice(0, 200));
+    if (!jm) throw new Error("Claude no devolvió JSON. Inicio: " + raw.slice(0, 200));
 
     let result;
     try {
       result = JSON.parse(jm[0]);
     } catch(parseErr) {
-      console.error("JSON truncado, recuperando...");
+      console.error("JSON truncado, intentando recuperar...");
       const movMatch = jm[0].match(/"movimientos"\s*:\s*(\[[\s\S]*)/);
       if (movMatch) {
         let partial = movMatch[1];
@@ -684,9 +888,9 @@ app.post("/analizar-tc", auth, async (req, res) => {
         for (let i = 0; i < opens - closes; i++) partial += "}";
         if (!partial.trim().endsWith("]")) partial += "]";
         try {
-          result = { movimientos: JSON.parse(partial), dudosos: [], total: 0, resumen: "Analisis parcial", mes_detectado: null, anio_detectado: null };
+          result = { movimientos: JSON.parse(partial), dudosos: [], total: 0, resumen: "Análisis parcial (JSON truncado)", mes_detectado: contexto?.mesActual, anio_detectado: contexto?.anioActual };
         } catch(e2) {
-          throw new Error("JSON invalido: " + parseErr.message);
+          throw new Error("JSON inválido: " + parseErr.message);
         }
       } else {
         throw new Error("JSON truncado sin movimientos recuperables");
@@ -696,12 +900,15 @@ app.post("/analizar-tc", auth, async (req, res) => {
     res.json({ ok: true, ...result });
   } catch(e) {
     const detail = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-    console.error("Error /analizar-tc:", detail);
+    console.error("Error analizando cartola:", detail);
     res.status(500).json({ error: e.message, detail: e.response?.data || null });
   }
-});
+}
 
-// ── Finanzas endpoints (GF, Ingresos, Movimientos TC, Notas) ──
+app.post("/analizar-tc", auth, analizarCartola);
+app.post("/analizar-cuenta-corriente", auth, analizarCartola);
+
+// ── Finanzas: Gastos fijos (catálogo y registros) ──
 app.get("/gf/items", auth, async (req, res) => {
   try {
     const r = await axios.get(`${SUPABASE_URL}/rest/v1/gf_items?order=categoria,orden`, { headers: SUPA_HEADERS });
@@ -759,6 +966,7 @@ app.post("/gf/generar", auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Finanzas: Ingresos ──
 app.get("/ingresos", auth, async (req, res) => {
   try {
     const { mes, anio } = req.query;
@@ -767,9 +975,25 @@ app.get("/ingresos", auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /ingresos con upsert por fuente_mov_id (idempotencia)
 app.post("/ingresos", auth, async (req, res) => {
   try {
-    const r = await axios.post(`${SUPABASE_URL}/rest/v1/ingresos`, req.body, { headers: SUPA_HEADERS });
+    const body = req.body;
+    if (body.fuente_mov_id) {
+      const existing = await axios.get(
+        `${SUPABASE_URL}/rest/v1/ingresos?fuente_mov_id=eq.${body.fuente_mov_id}`,
+        { headers: SUPA_HEADERS }
+      );
+      if (existing.data && existing.data.length > 0) {
+        const r = await axios.patch(
+          `${SUPABASE_URL}/rest/v1/ingresos?fuente_mov_id=eq.${body.fuente_mov_id}`,
+          body,
+          { headers: SUPA_HEADERS }
+        );
+        return res.json({ ingreso: r.data[0], upserted: true });
+      }
+    }
+    const r = await axios.post(`${SUPABASE_URL}/rest/v1/ingresos`, body, { headers: SUPA_HEADERS });
     res.json({ ingreso: r.data[0] });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -779,6 +1003,7 @@ app.delete("/ingresos/:id", auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Finanzas: Movimientos TC y CC ──
 app.get("/movimientos_tc", auth, async (req, res) => {
   try {
     const { mes, anio } = req.query;
@@ -787,11 +1012,33 @@ app.get("/movimientos_tc", auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /movimientos_tc con upsert por (cuenta_id, fecha, monto, descripcion, mes, anio) (idempotencia)
 app.post("/movimientos_tc", auth, async (req, res) => {
   try {
-    const r = await axios.post(`${SUPABASE_URL}/rest/v1/movimientos_tc`, req.body, { headers: SUPA_HEADERS });
+    const body = req.body;
+    if (body.cuenta_id && body.fecha && body.monto != null && body.descripcion) {
+      const existing = await axios.get(
+        `${SUPABASE_URL}/rest/v1/movimientos_tc` +
+        `?cuenta_id=eq.${encodeURIComponent(body.cuenta_id)}` +
+        `&fecha=eq.${body.fecha}` +
+        `&monto=eq.${body.monto}` +
+        `&descripcion=eq.${encodeURIComponent(body.descripcion)}` +
+        `&mes=eq.${body.mes}&anio=eq.${body.anio}`,
+        { headers: SUPA_HEADERS }
+      );
+      if (existing.data && existing.data.length > 0) {
+        const existingId = existing.data[0].id;
+        const r = await axios.patch(
+          `${SUPABASE_URL}/rest/v1/movimientos_tc?id=eq.${existingId}`,
+          body,
+          { headers: SUPA_HEADERS }
+        );
+        return res.json({ movimiento: r.data[0], upserted: true });
+      }
+    }
+    const r = await axios.post(`${SUPABASE_URL}/rest/v1/movimientos_tc`, body, { headers: SUPA_HEADERS });
     res.json({ movimiento: r.data[0] });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { res.status(500).json({ error: e.message, detail: e.response?.data || null }); }
 });
 
 app.patch("/movimientos_tc/:id", auth, async (req, res) => {
@@ -806,6 +1053,7 @@ app.delete("/movimientos_tc/:id", auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Finanzas: Notas del mes ──
 app.get("/notas_mes", auth, async (req, res) => {
   try {
     const { mes, anio } = req.query;
@@ -827,7 +1075,7 @@ app.post("/notas_mes", auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Gastos directos (pagos manuales que NO son TC) ──
+// ── Finanzas: Gastos directos (pagos manuales que NO son TC) ──
 // Usan tabla ingresos con monto negativo y tipo "Gasto directo"
 app.get("/gastos_directos", auth, async (req, res) => {
   try {
@@ -847,7 +1095,7 @@ app.post("/gastos_directos", auth, async (req, res) => {
       tipo: "Gasto directo",
       descripcion: `[${categoria}] ${descripcion}`,
       mes: parseInt(mes), anio: parseInt(anio),
-      monto: -(Math.abs(parseFloat(monto)||0)), // negativo = gasto
+      monto: -(Math.abs(parseFloat(monto)||0)),
       moneda: moneda || "CLP"
     }, { headers: SUPA_HEADERS });
     res.json({ gasto: r.data[0] });
