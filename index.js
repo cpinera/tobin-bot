@@ -867,7 +867,7 @@ async function analizarCartola(req, res) {
           "anthropic-beta": "pdfs-2024-09-25",
           "content-type": "application/json"
         },
-        timeout: 120000
+        timeout: 240000
       }
     );
 
