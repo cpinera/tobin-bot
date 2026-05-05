@@ -706,24 +706,58 @@ REGLA 3 — DETECTAR INGRESOS (es_ingreso:true)
   - "PAGO PROVEEDOR COLMENA GOL" / "PAGO PROVEEDOR CNS SEGUROS" → tipo_ingreso:"Devolución" (NO recurrente).
   - Cualquier abono >$500.000 que no caiga en patrones conocidos → marca es_ingreso:true PERO agrega a "dudosos" con razon:"ingreso_no_esperado".
 
-REGLA 4 — DETECTAR TRANSFERENCIAS INTERNAS (es_transferencia_interna:true, NO contar como gasto)
-  Pagos de TC desde cta cte:
-  - "Traspaso Internet a T. Crédito" (Santander cc1) → es_transferencia_interna:true.
-    Match el monto con MONTO TOTAL FACTURADO de las TC del mes para sugerir cuenta_destino_sugerida.
-  - "PAGO TARJETA CREDITO POR INTERNET" (Security cc2) → es_transferencia_interna:true.
-  - "COMPRA USD POR INTERNET PARA PAGO T.CREDITO" (Security cc2) → es_transferencia_interna:true.
-    Es la compra de USD para pagar TC USD. NO es gasto.
-  - "Egreso por Compra de Divisas" (Santander cc1) → es_transferencia_interna:true.
-    Suelen venir en pares pequeños (uno por monto, otro por costo); ambos son interna.
+REGLA 4 — DETECTAR TRANSFERENCIAS INTERNAS (es_transferencia_interna:true, NO contar como gasto NI ingreso)
 
-  Transferencias entre cuentas propias (todas es_transferencia_interna:true):
-  - "TRANSFERENCIA DESDE Santander DE CRISTOBAL PINERA MOREL" / "TRANSFERENCIA DESDE Security DE CRISTOBAL PI?ERA MOREL"
-    (la "?" es ñ mal codeada).
-  - "TRANSFERENCIA A Security PARA Oahu" → cuenta_destino_sugerida:"cc5".
-  - "TRANSFERENCIA A Security PARA Sofia Marin" → cuenta_destino_sugerida:"cc3".
-  - "TRANSFERENCIA A Santander PARA cristobal" → cuenta_destino_sugerida:"cc1".
-  - "TRANSF A CUENTA SECURITY" → cuenta_destino_sugerida:"cc2".
-  - "TRANSF A SOFIA MARIN" → cuenta_destino_sugerida:"cc3".
+⚠️ CRITERIO CONTABLE: el balance del mes (ingresos - gastos) debe acercarse a 0
+si la persona no ahorra activamente. Cualquier movimiento entre cuentas/sociedades
+del usuario (Cristóbal Piñera Morel + esposa Sofía + sociedad Oahu) DEBE marcarse
+como interna, o duplicaremos el conteo.
+
+UNIVERSO DE CUENTAS DEL USUARIO (todas las transferencias entre estas son INTERNAS):
+  - Cta cte Santander Cristóbal: 0-000-62-41496-0 (cc1)
+  - Cta cte Security Cristóbal: 919293583 (cc2)
+  - Cta cte Security Sofía: 919614625 (cc3)
+  - Cta cte Security Oahu (sociedad propia): 928697494 (cc5)
+  - 8 tarjetas de crédito (tc1-tc8)
+
+A. Pagos de TC desde cta cte (SIEMPRE es_transferencia_interna:true):
+  Patrones a detectar (cualquier descripción que contenga estas palabras):
+  - "Traspaso Internet a T. Crédito" (Santander cc1)
+  - "Traspaso ... Tarjeta" / "Traspaso ... T.Credito" / "Traspaso ... TC"
+  - "PAGO TARJETA CREDITO POR INTERNET" (Security cc2)
+  - "PAGO TARJETA" / "PAGO T. CREDITO" / "PAGO T.CREDITO" / "PAGO TC"
+  - "ABONO TARJETA"
+  → Match el monto con MONTO TOTAL FACTURADO de las TC del mes para sugerir cuenta_destino_sugerida.
+
+B. Compra de USD para pagar TC USD (SIEMPRE es_transferencia_interna:true):
+  - "COMPRA USD POR INTERNET PARA PAGO T.CREDITO"
+  - "Egreso por Compra de Divisas"
+  - "COMPRA DE DIVISAS"
+  - "INGRESO POR VENTA DE DIVISAS" (la contraparte)
+  Suelen venir en pares pequeños (uno por monto, otro por costo); ambos son interna.
+
+C. Transferencias entre cuentas propias del usuario (SIEMPRE es_transferencia_interna:true):
+  Todas las transferencias donde el TITULAR de origen o destino sea Cristóbal Piñera, Sofía Marín o sociedad Oahu.
+  - "TRANSFERENCIA DESDE Santander DE CRISTOBAL PINERA MOREL"
+  - "TRANSFERENCIA DESDE Security DE CRISTOBAL PI?ERA MOREL" (la "?" es ñ mal codeada)
+  - "TRANSFERENCIA DESDE Chile DE CRISTOBAL PINERA"
+  - "TRANSFERENCIA A Security PARA Oahu" → cuenta_destino_sugerida:"cc5"
+  - "TRANSFERENCIA A Security PARA Sofia Marin" → cuenta_destino_sugerida:"cc3"
+  - "TRANSFERENCIA A Santander PARA cristobal" → cuenta_destino_sugerida:"cc1"
+  - "TRANSF A CUENTA SECURITY" → cuenta_destino_sugerida:"cc2"
+  - "TRANSF A SOFIA MARIN" → cuenta_destino_sugerida:"cc3"
+  - "TRANSF A OAHU" / "TRANSFERENCIA A OAHU" → cuenta_destino_sugerida:"cc5"
+  - "TRANSF A SANTANDER" → cuenta_destino_sugerida:"cc1"
+  - "TRANSFERENCIA INTERNA"
+
+D. Casos que NO son transferencia interna (son gastos o ingresos reales):
+  - "TRANSF A GABRIEL" / "TRANSF A VIVIAN JESSY" / "TRANSF A RICARDO" / "TRANSF A PALMENIA"
+    → SON GASTOS (sueldos a empleados externos), NO son internas.
+  - "TRANSF A SUR RALISTA" / "TRANSF A RIEGO" / "TRANSF A JARDINERO" → proveedores externos, son GASTOS.
+  - "TRANSF DE JUAN SEBASTIAN PINE" → ingreso externo de hermano, NO es interna.
+  - "TRANSFERENCIA BTG PACTUAL" → ingreso externo (rescate de inversión externa), NO es interna.
+  - "TRANSF DE INVERSIONES ODISEA" → si Odisea es empresa externa pagando sueldo, es INGRESO.
+  - "TRANSF DE ASESORIAS" / "TRANSF ASESORIAS" → ingreso externo (sueldo Tantauco probablemente).
 
 REGLA 5 — RUIDO BANCARIO (categoria:"Transferencia interna", monto correcto, NO contar como gasto)
   Estos siempre vienen en pares y se cancelan entre sí:
@@ -786,6 +820,34 @@ REGLA 9 — DUDOSOS QUE DEBES EMITIR (cada uno con razon)
   - "gasto_extraordinario" → monto >$500.000 CLP no clasificado claramente
     (incluye el pago al SII si aparece, monto típico >$10M).
   - "ingreso_no_esperado" → depósito que no matchea con tipos conocidos.
+  - "posible_interna" → movimiento que parece transferencia interna pero no estás 100% seguro.
+
+REGLA 10 — VALIDACIÓN DE CUADRE (CRÍTICA, hacer ANTES de responder)
+
+Antes de devolver el JSON final, revisa CADA movimiento contra esta checklist:
+
+  ¿Descripción menciona "Traspaso", "PAGO TARJETA", "PAGO T.CREDITO", "PAGO TC"?
+    → DEBE tener es_transferencia_interna:true. Si no lo tiene, corrígelo.
+
+  ¿Descripción menciona "Compra de Divisas", "COMPRA USD", "VENTA USD"?
+    → DEBE tener es_transferencia_interna:true.
+
+  ¿Descripción menciona transferencia a/desde "CRISTOBAL PINERA"/"PIÑERA"/"PI?ERA",
+   o a/desde "SOFIA MARIN", o a/desde "Oahu"?
+    → DEBE tener es_transferencia_interna:true (movimiento entre cuentas propias).
+
+  ¿Descripción dice "LÍNEA DE SOBREGIRO", "PAGO DE LINEA DE CREDITO",
+   "PAGO AUTOMATICO LINEA SOBREGIRO"?
+    → DEBE tener es_transferencia_interna:true (ruido contable bancario).
+
+Si tienes dudas sobre si algo es interna o no, MARCA como transferencia_interna y
+agrégalo a "dudosos" con razon:"posible_interna" — es preferible marcar de más
+y que el usuario confirme, que dejar pasar duplicados que rompen el cuadre.
+
+PRINCIPIO CONTABLE: El balance del mes (ingresos reales - gastos reales) debe
+acercarse a 0 si la persona no ahorra activamente. Si después de tu análisis
+el balance del mes parece muy positivo o muy negativo, probablemente faltó
+marcar alguna transferencia interna.
 
 ═══════════════════════════════════════════════════════════════════
 FORMATO DE RESPUESTA (SOLO JSON, NADA MÁS)
