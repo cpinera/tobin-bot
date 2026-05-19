@@ -32,6 +32,14 @@ function registerDashboardRoutes(app, deps) {
     Prefer: 'resolution=merge-duplicates,return=representation',
   };
 
+  function logSupaErr(label, e) {
+    console.error(`[dashboard] ${label}:`, e.message);
+    if (e.response) {
+      console.error(`[dashboard] ${label} status:`, e.response.status);
+      console.error(`[dashboard] ${label} data:`, JSON.stringify(e.response.data));
+    }
+  }
+
   // ── Helpers ─────────────────────────────────────────────
   function todayChile() {
     // YYYY-MM-DD en zona Chile (maneja DST correctamente)
@@ -193,24 +201,35 @@ function registerDashboardRoutes(app, deps) {
       // Carryover desde el día anterior
       const yesterday = new Date(new Date(fecha + 'T12:00:00Z').getTime() - 86400000)
         .toISOString().slice(0, 10);
-      const y = await axios.get(
-        `${SUPABASE_URL}/rest/v1/daily_notes?fecha=eq.${yesterday}`,
-        { headers: SUPA_HEADERS }
-      );
       let carry = [];
-      if (y.data && y.data.length > 0) {
-        const yItems = y.data[0].items || [];
-        carry = yItems.filter(it => !(it.tipo === 'check' && it.completado));
+      try {
+        const y = await axios.get(
+          `${SUPABASE_URL}/rest/v1/daily_notes?fecha=eq.${yesterday}`,
+          { headers: SUPA_HEADERS }
+        );
+        if (y.data && y.data.length > 0) {
+          const yItems = y.data[0].items || [];
+          carry = yItems.filter(it => !(it.tipo === 'check' && it.completado));
+        }
+      } catch (e) {
+        logSupaErr('daily-notes carryover read', e);
       }
-      await axios.post(
-        `${SUPABASE_URL}/rest/v1/daily_notes`,
-        { fecha, items: carry, archive: [] },
-        { headers: SUPA_UPSERT }
-      );
+      // Insertar fila nueva con el carryover (con on_conflict explícito)
+      try {
+        await axios.post(
+          `${SUPABASE_URL}/rest/v1/daily_notes?on_conflict=fecha`,
+          { fecha, items: carry, archive: [] },
+          { headers: SUPA_UPSERT }
+        );
+      } catch (e) {
+        logSupaErr('daily-notes insert new row', e);
+        // No fallar — devolvemos el carry aunque no se haya guardado.
+        // El siguiente save (PUT desde el frontend) lo persistirá.
+      }
       res.json({ items: carry, archive: [] });
     } catch (e) {
-      console.error('GET /dashboard/daily-notes error:', e.message);
-      res.status(500).json({ error: e.message });
+      logSupaErr('GET /dashboard/daily-notes', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
     }
   });
 
@@ -219,7 +238,7 @@ function registerDashboardRoutes(app, deps) {
       const fecha = req.params.fecha;
       const { items, archive } = req.body || {};
       await axios.post(
-        `${SUPABASE_URL}/rest/v1/daily_notes`,
+        `${SUPABASE_URL}/rest/v1/daily_notes?on_conflict=fecha`,
         {
           fecha,
           items: items || [],
@@ -230,8 +249,8 @@ function registerDashboardRoutes(app, deps) {
       );
       res.json({ ok: true });
     } catch (e) {
-      console.error('POST /dashboard/daily-notes error:', e.message);
-      res.status(500).json({ error: e.message });
+      logSupaErr('POST /dashboard/daily-notes', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
     }
   });
 
@@ -282,7 +301,7 @@ function registerDashboardRoutes(app, deps) {
       const { prep, durante, event_title, event_start } = req.body || {};
       const normalizedStart = normalizeEventStart(event_start);
       await axios.post(
-        `${SUPABASE_URL}/rest/v1/event_notes`,
+        `${SUPABASE_URL}/rest/v1/event_notes?on_conflict=event_id`,
         {
           event_id: req.params.event_id,
           event_title: event_title || null,
@@ -295,7 +314,7 @@ function registerDashboardRoutes(app, deps) {
       );
       res.json({ ok: true });
     } catch (e) {
-      console.error('POST /dashboard/event-notes error:', e.message, e.response?.data);
+      logSupaErr('POST /dashboard/event-notes', e);
       res.status(500).json({ error: e.message, detail: e.response?.data });
     }
   });
