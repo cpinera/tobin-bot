@@ -1171,6 +1171,7 @@ app.delete("/gastos_directos/:id", auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-
+const { registerDashboardRoutes } = require('./dashboard-api');
+   registerDashboardRoutes(app, { auth, SUPABASE_URL, SUPABASE_KEY });
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot corriendo en puerto ${PORT}`));
