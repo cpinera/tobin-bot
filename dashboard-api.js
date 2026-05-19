@@ -256,15 +256,37 @@ function registerDashboardRoutes(app, deps) {
     }
   });
 
+  // Normaliza event_start: acepta "HH:MM" (lo combina con hoy en Chile) o ISO completo.
+  // Devuelve string ISO válido o null.
+  function normalizeEventStart(s) {
+    if (!s || typeof s !== 'string') return null;
+    if (/^\d{2}:\d{2}$/.test(s)) {
+      // Solo hora; combinar con hoy en Chile
+      const today = todayChile();
+      // Chile es UTC-4 (o UTC-3 con DST). Detectamos el offset actual.
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Santiago', timeZoneName: 'longOffset',
+      }).formatToParts(new Date());
+      const tz = (parts.find(p => p.type === 'timeZoneName') || {}).value || 'GMT-04:00';
+      const m = tz.match(/([+-]\d{1,2})(?::?(\d{2}))?/);
+      const offset = m ? `${m[1].padStart(3, '+').replace('+-', '-')}:${m[2] || '00'}` : '-04:00';
+      return `${today}T${s}:00${offset}`;
+    }
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+
   app.post('/dashboard/event-notes/:event_id', auth, async (req, res) => {
     try {
       const { prep, durante, event_title, event_start } = req.body || {};
+      const normalizedStart = normalizeEventStart(event_start);
       await axios.post(
         `${SUPABASE_URL}/rest/v1/event_notes`,
         {
           event_id: req.params.event_id,
           event_title: event_title || null,
-          event_start: event_start || null,
+          event_start: normalizedStart,
           preparacion: prep || '',
           durante: durante || '',
           updated_at: new Date().toISOString(),
@@ -273,8 +295,8 @@ function registerDashboardRoutes(app, deps) {
       );
       res.json({ ok: true });
     } catch (e) {
-      console.error('POST /dashboard/event-notes error:', e.message);
-      res.status(500).json({ error: e.message });
+      console.error('POST /dashboard/event-notes error:', e.message, e.response?.data);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
     }
   });
 
