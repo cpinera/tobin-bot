@@ -319,6 +319,138 @@ function registerDashboardRoutes(app, deps) {
     }
   });
 
+  app.delete('/dashboard/event-notes/:event_id', auth, async (req, res) => {
+    try {
+      await axios.delete(
+        `${SUPABASE_URL}/rest/v1/event_notes?event_id=eq.${encodeURIComponent(req.params.event_id)}`,
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      logSupaErr('DELETE /dashboard/event-notes', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // NUEVA ARQUITECTURA: note_items (una fila por nota individual)
+  // ══════════════════════════════════════════════════════════
+
+  // GET activas: no borradas, y (no completadas OR completadas hoy)
+  app.get('/dashboard/note-items/active', auth, async (req, res) => {
+    try {
+      const today = todayChile();
+      const startOfToday = `${today}T00:00:00-04:00`;
+      const url = `${SUPABASE_URL}/rest/v1/note_items?deleted=eq.false&or=(completado.eq.false,completado_at.gte.${encodeURIComponent(startOfToday)})&order=creado_at.asc`;
+      const r = await axios.get(url, { headers: SUPA_HEADERS });
+      res.json(r.data || []);
+    } catch (e) {
+      logSupaErr('GET /dashboard/note-items/active', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Crear nueva nota
+  app.post('/dashboard/note-items', auth, async (req, res) => {
+    try {
+      const { tipo, texto, titulo, cuerpo } = req.body || {};
+      const r = await axios.post(
+        `${SUPABASE_URL}/rest/v1/note_items`,
+        {
+          tipo: tipo || 'check',
+          texto: texto || '',
+          titulo: titulo || '',
+          cuerpo: cuerpo || '',
+          completado: false,
+        },
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true, item: (r.data || [])[0] });
+    } catch (e) {
+      logSupaErr('POST /dashboard/note-items', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Editar / toggle / etc.
+  app.patch('/dashboard/note-items/:id', auth, async (req, res) => {
+    try {
+      const body = {};
+      const fields = ['tipo', 'texto', 'titulo', 'cuerpo'];
+      fields.forEach(f => { if (req.body[f] !== undefined) body[f] = req.body[f]; });
+      if (req.body.completado !== undefined) {
+        body.completado = !!req.body.completado;
+        body.completado_at = body.completado ? new Date().toISOString() : null;
+      }
+      body.updated_at = new Date().toISOString();
+      const r = await axios.patch(
+        `${SUPABASE_URL}/rest/v1/note_items?id=eq.${req.params.id}`,
+        body,
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true, item: (r.data || [])[0] });
+    } catch (e) {
+      logSupaErr('PATCH /dashboard/note-items', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Borrar (soft delete)
+  app.delete('/dashboard/note-items/:id', auth, async (req, res) => {
+    try {
+      await axios.patch(
+        `${SUPABASE_URL}/rest/v1/note_items?id=eq.${req.params.id}`,
+        { deleted: true, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      logSupaErr('DELETE /dashboard/note-items', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Historial: todas las notas (incluso completadas), no borradas, agrupadas por fecha de creación
+  app.get('/dashboard/note-items/history', auth, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit, 10) || 500;
+      const r = await axios.get(
+        `${SUPABASE_URL}/rest/v1/note_items?deleted=eq.false&order=creado_at.desc&limit=${limit}`,
+        { headers: SUPA_HEADERS }
+      );
+      res.json(r.data || []);
+    } catch (e) {
+      logSupaErr('GET /dashboard/note-items/history', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  app.get('/dashboard/daily-notes-list', auth, async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit, 10) || 60;
+      const r = await axios.get(
+        `${SUPABASE_URL}/rest/v1/daily_notes?order=fecha.desc&limit=${limit}`,
+        { headers: SUPA_HEADERS }
+      );
+      const items = (r.data || []).map(row => {
+        const it = row.items || [];
+        const ar = row.archive || [];
+        const firstItem = it[0] || ar[0];
+        const previewText = firstItem ? (firstItem.titulo || firstItem.texto || '(sin contenido)') : '(sin notas)';
+        return {
+          fecha: row.fecha,
+          items_count: it.length,
+          archive_count: ar.length,
+          preview: String(previewText).slice(0, 120),
+        };
+      });
+      res.json(items);
+    } catch (e) {
+      logSupaErr('GET /dashboard/daily-notes-list', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
   app.get('/dashboard/event-notes', auth, async (req, res) => {
     try {
       const search = (req.query.search || '').trim();
