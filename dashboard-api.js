@@ -480,6 +480,118 @@ function registerDashboardRoutes(app, deps) {
     }
   });
 
+  // ══════════════════════════════════════════════════════════
+  //  Cuentas (checklist de pagos mensuales)
+  //  - cuentas_items: ítem recurrente (nombre + monto default)
+  //  - cuentas_mes:   estado por mes (pagado) con PK (item_id, mes)
+  // ══════════════════════════════════════════════════════════
+
+  // Lista los ítems activos + su estado de pagado para el mes dado.
+  app.get('/dashboard/cuentas/:mes', auth, async (req, res) => {
+    try {
+      const mes = req.params.mes; // 'YYYY-MM'
+      const itemsRes = await axios.get(
+        `${SUPABASE_URL}/rest/v1/cuentas_items?deleted=eq.false&order=orden.asc,creado_at.asc`,
+        { headers: SUPA_HEADERS }
+      );
+      const items = itemsRes.data || [];
+      let estados = [];
+      if (items.length > 0) {
+        try {
+          const est = await axios.get(
+            `${SUPABASE_URL}/rest/v1/cuentas_mes?mes=eq.${encodeURIComponent(mes)}`,
+            { headers: SUPA_HEADERS }
+          );
+          estados = est.data || [];
+        } catch (e) {
+          logSupaErr('cuentas_mes read', e);
+        }
+      }
+      const estMap = {};
+      estados.forEach(e => { estMap[e.item_id] = e; });
+      const payload = items.map(it => ({
+        id: it.id,
+        nombre: it.nombre,
+        monto: Number(it.monto) || 0,
+        orden: it.orden || 0,
+        pagado: !!(estMap[it.id] && estMap[it.id].pagado),
+      }));
+      res.json(payload);
+    } catch (e) {
+      logSupaErr('GET /dashboard/cuentas', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Crear ítem nuevo
+  app.post('/dashboard/cuentas', auth, async (req, res) => {
+    try {
+      const { nombre, monto, orden } = req.body || {};
+      const r = await axios.post(
+        `${SUPABASE_URL}/rest/v1/cuentas_items`,
+        { nombre: nombre || '', monto: Number(monto) || 0, orden: Number(orden) || 0 },
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true, item: (r.data || [])[0] });
+    } catch (e) {
+      logSupaErr('POST /dashboard/cuentas', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Editar ítem (nombre y/o monto default y/o orden)
+  app.patch('/dashboard/cuentas/:id', auth, async (req, res) => {
+    try {
+      const body = {};
+      if (req.body.nombre !== undefined) body.nombre = req.body.nombre;
+      if (req.body.monto !== undefined) body.monto = Number(req.body.monto) || 0;
+      if (req.body.orden !== undefined) body.orden = Number(req.body.orden) || 0;
+      body.updated_at = new Date().toISOString();
+      const r = await axios.patch(
+        `${SUPABASE_URL}/rest/v1/cuentas_items?id=eq.${parseInt(req.params.id, 10)}`,
+        body,
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true, item: (r.data || [])[0] });
+    } catch (e) {
+      logSupaErr('PATCH /dashboard/cuentas', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Borrar ítem (soft delete)
+  app.delete('/dashboard/cuentas/:id', auth, async (req, res) => {
+    try {
+      await axios.patch(
+        `${SUPABASE_URL}/rest/v1/cuentas_items?id=eq.${parseInt(req.params.id, 10)}`,
+        { deleted: true, updated_at: new Date().toISOString() },
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      logSupaErr('DELETE /dashboard/cuentas', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Marcar/desmarcar pagado para un mes (upsert por item_id+mes)
+  app.put('/dashboard/cuentas/:id/check/:mes', auth, async (req, res) => {
+    try {
+      const item_id = parseInt(req.params.id, 10);
+      const mes = req.params.mes;
+      const pagado = !!(req.body && req.body.pagado);
+      await axios.post(
+        `${SUPABASE_URL}/rest/v1/cuentas_mes?on_conflict=item_id,mes`,
+        { item_id, mes, pagado, updated_at: new Date().toISOString() },
+        { headers: SUPA_UPSERT }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      logSupaErr('PUT /dashboard/cuentas check', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
   console.log('✓ Dashboard routes registradas en /dashboard/*');
 }
 
