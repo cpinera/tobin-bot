@@ -56,6 +56,14 @@ function registerDashboardRoutes(app, deps) {
     if (!iso) return '';
     return iso.slice(0, 10);
   }
+  function shiftMes(mes, delta) {
+    // 'YYYY-MM' ± delta meses
+    let [y, m] = mes.split('-').map(Number);
+    m += delta;
+    while (m < 1) { m += 12; y--; }
+    while (m > 12) { m -= 12; y++; }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  }
 
   // ──────────────────────────────────────────────────────────
   //  Calendar
@@ -495,27 +503,72 @@ function registerDashboardRoutes(app, deps) {
         { headers: SUPA_HEADERS }
       );
       const items = itemsRes.data || [];
-      let estados = [];
+
+      // Estado (pagado + monto) del mes pedido
+      let monthRows = [];
       if (items.length > 0) {
         try {
           const est = await axios.get(
             `${SUPABASE_URL}/rest/v1/cuentas_mes?mes=eq.${encodeURIComponent(mes)}`,
             { headers: SUPA_HEADERS }
           );
-          estados = est.data || [];
+          monthRows = est.data || [];
         } catch (e) {
           logSupaErr('cuentas_mes read', e);
         }
       }
-      const estMap = {};
-      estados.forEach(e => { estMap[e.item_id] = e; });
-      const payload = items.map(it => ({
-        id: it.id,
-        nombre: it.nombre,
-        monto: Number(it.monto) || 0,
-        orden: it.orden || 0,
-        pagado: !!(estMap[it.id] && estMap[it.id].pagado),
-      }));
+
+      // Si el mes aún no existe, lo "materializamos": copiamos los montos
+      // del mes anterior (o el default del ítem) y dejamos pagado=false.
+      // Desde ese momento, editar un monto solo afecta a ese mes.
+      if (items.length > 0 && monthRows.length === 0) {
+        const prevMes = shiftMes(mes, -1);
+        let prevRows = [];
+        try {
+          const pr = await axios.get(
+            `${SUPABASE_URL}/rest/v1/cuentas_mes?mes=eq.${encodeURIComponent(prevMes)}`,
+            { headers: SUPA_HEADERS }
+          );
+          prevRows = pr.data || [];
+        } catch (e) {
+          logSupaErr('cuentas_mes prev read', e);
+        }
+        const prevMap = {};
+        prevRows.forEach(r => { prevMap[r.item_id] = r; });
+        const seed = items.map(it => ({
+          item_id: it.id,
+          mes,
+          pagado: false,
+          monto: (prevMap[it.id] && prevMap[it.id].monto != null)
+            ? prevMap[it.id].monto
+            : (Number(it.monto) || 0),
+        }));
+        try {
+          const ins = await axios.post(
+            `${SUPABASE_URL}/rest/v1/cuentas_mes?on_conflict=item_id,mes`,
+            seed,
+            { headers: SUPA_UPSERT }
+          );
+          monthRows = (ins.data && ins.data.length) ? ins.data : seed;
+        } catch (e) {
+          logSupaErr('cuentas_mes materialize', e);
+          monthRows = seed; // devolver aunque no se haya persistido
+        }
+      }
+
+      const rowMap = {};
+      monthRows.forEach(r => { rowMap[r.item_id] = r; });
+      const payload = items.map(it => {
+        const row = rowMap[it.id];
+        const monto = (row && row.monto != null) ? Number(row.monto) : (Number(it.monto) || 0);
+        return {
+          id: it.id,
+          nombre: it.nombre,
+          monto,
+          orden: it.orden || 0,
+          pagado: !!(row && row.pagado),
+        };
+      });
       res.json(payload);
     } catch (e) {
       logSupaErr('GET /dashboard/cuentas', e);
@@ -588,6 +641,31 @@ function registerDashboardRoutes(app, deps) {
       res.json({ ok: true });
     } catch (e) {
       logSupaErr('PUT /dashboard/cuentas check', e);
+      res.status(500).json({ error: e.message, detail: e.response?.data });
+    }
+  });
+
+  // Editar el monto de un ítem para un mes específico (independiente por mes).
+  // También actualiza el default del ítem, para que los meses nuevos hereden
+  // el último valor conocido.
+  app.put('/dashboard/cuentas/:id/monto/:mes', auth, async (req, res) => {
+    try {
+      const item_id = parseInt(req.params.id, 10);
+      const mes = req.params.mes;
+      const monto = Number(req.body && req.body.monto) || 0;
+      await axios.post(
+        `${SUPABASE_URL}/rest/v1/cuentas_mes?on_conflict=item_id,mes`,
+        { item_id, mes, monto, updated_at: new Date().toISOString() },
+        { headers: SUPA_UPSERT }
+      );
+      await axios.patch(
+        `${SUPABASE_URL}/rest/v1/cuentas_items?id=eq.${item_id}`,
+        { monto, updated_at: new Date().toISOString() },
+        { headers: SUPA_HEADERS }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      logSupaErr('PUT /dashboard/cuentas monto', e);
       res.status(500).json({ error: e.message, detail: e.response?.data });
     }
   });
